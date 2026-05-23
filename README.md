@@ -27,6 +27,15 @@ cp .env.example .env
 uv run my-agent2
 ```
 
+On this Mac, the most reliable local command is:
+
+```bash
+./run.sh
+```
+
+`run.sh` calls `uv --directory ... run --no-editable my-agent2`, which avoids
+terminal current-directory issues and editable-install import issues.
+
 Default `.env` settings use DeepSeek:
 
 ```bash
