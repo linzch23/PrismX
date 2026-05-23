@@ -8,6 +8,7 @@ It includes:
 
 - a provider adapter for DeepSeek, Anthropic, and OpenAI-compatible chat APIs
 - streaming assistant text in the main CLI conversation
+- MCP tools from stdio and Streamable HTTP MCP servers
 - workspace file tools: `read_file`, `write_file`, `edit_file`, `glob`, `grep`
 - command and web fetch tools
 - persistent conversation logs and lightweight long-term memory
@@ -48,12 +49,45 @@ MY_AGENT_COMPACT_THRESHOLD=0.7
 MY_AGENT_COMPACT_KEEP_MESSAGES=8
 ```
 
+## MCP Tools
+
+`my_agent2` can connect to external MCP servers and expose their tools to the
+agent. Configure servers in `mcp_servers.json` at the project root:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-filesystem", "."],
+      "env": {
+        "SOME_TOKEN": "${SOME_TOKEN}"
+      }
+    },
+    "local_http": {
+      "transport": "streamable_http",
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+`transport` may be omitted when `command` or `url` is present. MCP tool names are
+registered as `mcp_{server}_{tool}` with unsafe characters replaced by `_`.
+This first MCP integration exposes tools only; MCP resources and prompts are not
+mapped yet.
+
 Useful commands inside the CLI:
 
 - `/help` - show commands
 - `/tools` - list registered tools
 - `/todos` - show the current todo list
 - `/memory` - show long-term memory
+- `/mcp` - show MCP server status and discovered MCP tools
 - `/compact` - force conversation history compression
 - `/team` - show persistent teammate status
 - `/inbox` - read and clear the lead inbox

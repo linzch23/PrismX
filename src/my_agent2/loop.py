@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from .compactor import HistoryCompactor
 from .context import ContextBuilder
 from .memory import MemoryStore, TokenLog
+from .mcp_bridge import MCPClientManager
 from .model_client import build_model_client
 from .runner import AgentRunner
 from .skills import SkillsLoader
@@ -58,6 +59,7 @@ class AgentApp:
         self.skills = SkillsLoader(self.root / "skills")
         self.todos = TodoStore()
         self.team_bus = MessageBus(self.root / ".team" / "inbox")
+        self.mcp = MCPClientManager(self.root / "mcp_servers.json")
 
         self.registry = self._build_registry()
         self.compactor = HistoryCompactor(
@@ -100,6 +102,16 @@ class AgentApp:
         registry.register(LoadSkillTool(self.skills))
         registry.register(UpdateTodosTool(self.todos))
         registry.register(RememberTool(self.memory))
+
+        self.mcp.start()
+        for tool in self.mcp.tools():
+            if registry.get(tool.name) is not None:
+                print(f"[warning] skipped MCP tool name collision: {tool.name}")
+                continue
+            registry.register(tool)
+        for status in self.mcp.statuses.values():
+            if status.status == "error":
+                print(f"[warning] MCP server {status.name} failed: {status.error}")
 
         def teammate_tools(sender: str):
             return [
@@ -158,3 +170,6 @@ class AgentApp:
 
     def compact_now(self) -> bool:
         return self.compactor.compact(self.history)
+
+    def close(self) -> None:
+        self.mcp.close()
