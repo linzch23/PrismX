@@ -2,6 +2,12 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
-UV="${UV:-/Users/ipsc_gummy/.local/bin/uv}"
 
-exec "$UV" --directory "$ROOT" run --no-editable my-agent2
+MY_AGENT_ROOT="$ROOT" \
+PYTHONPATH="$ROOT/src" \
+exec "$ROOT/.venv/bin/python" -c '
+import os
+os.chdir(os.environ["MY_AGENT_ROOT"])
+from my_agent2.cli import main
+main()
+'
