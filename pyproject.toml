@@ -1,0 +1,27 @@
+[project]
+name = "my-agent2"
+version = "0.1.0"
+description = "A general-purpose tool-using agent with skills, todos, memory, and subagents."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.50.0",
+    "jinja2>=3.1.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.scripts]
+my-agent2 = "my_agent2.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
