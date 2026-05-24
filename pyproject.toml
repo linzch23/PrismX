@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 my-agent2 = "my_agent2.cli:main"
+my-agent2-web = "my_agent2.server:main"
 
 [build-system]
 requires = ["hatchling"]

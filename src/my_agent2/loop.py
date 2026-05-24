@@ -176,10 +176,26 @@ class AgentApp:
         self,
         user_input: str,
         on_text_delta: Callable[[str], None] | None = None,
+        on_tool_call: Callable[[Any], None] | None = None,
+        on_tool_result: Callable[[dict[str, str]], None] | None = None,
     ) -> str:
         self.tree.append_message(self.session_id, {"role": "user", "content": user_input})
         self.memory.append_history("user", user_input)
         prompt_history = self.tree.buildModelContext(self.session_id)
+
+        def record_tool_call(block: Any) -> None:
+            self.tree.append_tool_call(
+                self.session_id,
+                {"id": block.id, "name": block.name, "input": block.input},
+            )
+            if on_tool_call:
+                on_tool_call(block)
+
+        def record_tool_result(result: dict[str, str]) -> None:
+            self.tree.append_tool_result(self.session_id, result)
+            if on_tool_result:
+                on_tool_result(result)
+
         reply = self.runner.step(
             prompt_history,
             on_text_delta=on_text_delta,
@@ -187,11 +203,8 @@ class AgentApp:
                 self.session_id,
                 {"role": "assistant", "content": content},
             ),
-            on_tool_call=lambda block: self.tree.append_tool_call(
-                self.session_id,
-                {"id": block.id, "name": block.name, "input": block.input},
-            ),
-            on_tool_result=lambda result: self.tree.append_tool_result(self.session_id, result),
+            on_tool_call=record_tool_call,
+            on_tool_result=record_tool_result,
             history_provider=lambda: self.tree.buildModelContext(self.session_id),
         )
         self.memory.append_history("assistant", reply)

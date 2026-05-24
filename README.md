@@ -37,6 +37,16 @@ uv run my-agent2
 `run.sh` 会自动定位项目目录、设置 `PYTHONPATH`、切换到仓库根目录，并使用虚拟环境里的
 Python 入口启动程序。这样可以避免终端当前目录和 editable install 带来的导入问题。
 
+启动本地 Web 工作台：
+
+```bash
+./run_web.sh
+```
+
+默认监听 `http://127.0.0.1:8765`。Web 工作台复用同一个 `AgentApp` 应用层，
+通过 HTTP/SSE 暴露聊天流、会话树、active branch、context debug、工具、MCP 和 team 状态。
+会话仍然持久化在 `sessions/*.jsonl`，JSONL 仍是事实来源。
+
 默认 `.env` 配置使用 DeepSeek：
 
 ```bash
@@ -120,6 +130,7 @@ MY_AGENT_STARTUP_COMPACTION=0
 ```text
 src/my_agent2/
   cli.py              CLI 入口
+  server.py           本地 Web/API 入口
   loop.py             应用装配
   runner.py           模型与工具调用循环
   compactor.py        旧版线性历史压缩
