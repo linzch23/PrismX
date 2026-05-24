@@ -104,6 +104,19 @@ class AgentApp:
 
         context = ContextBuilder(self.root / "templates", self.skills, self.memory)
         self.system_prompt = context.build(workspace=self.workspace)
+
+        # RuntimeContextBuilder: per-turn memory recall
+        from .context_backend import LocalContextBackend
+        from .context import RuntimeContextBuilder
+        runtime_limit = int(os.getenv("MY_AGENT_RUNTIME_CONTEXT_LIMIT", "6"))
+        runtime_chars = int(os.getenv("MY_AGENT_RUNTIME_CONTEXT_MAX_CHARS", "12000"))
+        self.context_builder_obj = context  # keep reference to ContextBuilder instance
+        self.runtime_context_builder = RuntimeContextBuilder(
+            LocalContextBackend(self.memory),
+            limit=runtime_limit,
+            max_chars=runtime_chars,
+        )
+
         self.runner = AgentRunner(
             client=self.client,
             model=self.model,
@@ -195,6 +208,12 @@ class AgentApp:
         user_input: str,
         on_text_delta: Callable[[str], None] | None = None,
     ) -> str:
+        # Build runtime context from user input and rebuild system prompt
+        runtime_context = self.runtime_context_builder.build(user_input)
+        self.runner.system_prompt = self.context_builder_obj.build(
+            workspace=self.workspace, runtime_context=runtime_context,
+        )
+
         self.tree.append_message(self.session_id, {"role": "user", "content": user_input})
         self.memory.append_history("user", user_input)
         prompt_history = self.tree.buildModelContext(self.session_id)
