@@ -1,18 +1,10 @@
 from __future__ import annotations
 
-"""Pi-compatible append-only tree sessions.
+"""Append-only tree sessions for my_agent2.
 
-Inspired by the Pi coding-agent session model:
-https://github.com/earendil-works/pi/tree/main/packages/coding-agent
-
-Pi is MIT licensed:
-MIT License, Copyright (c) 2025 Mario Zechner.
-
-This module is an original Python adaptation for my_agent2. It ports the
-minimal tree-session concepts needed here: JSONL source-of-truth storage,
-id/parentId entries, active leaf context construction, labels, branch summaries,
-compaction entries, and a small Context Ladder extension seam. It does not port
-Pi's TUI or complete agent runtime.
+本模块实现 JSONL 作为事实来源的会话树：每个条目都有 `id` 和 `parentId`，
+当前上下文由 active leaf 所在分支构造，并支持标签、分支摘要、上下文压缩
+和基础 Context Ladder 分层。
 """
 
 import json

@@ -1,7 +1,7 @@
 [project]
 name = "my-agent2"
 version = "0.1.0"
-description = "A general-purpose tool-using agent with skills, todos, memory, and subagents."
+description = "一个支持工具、技能、任务列表、记忆和子代理的通用型本地 Agent。"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

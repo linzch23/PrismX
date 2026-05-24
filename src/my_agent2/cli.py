@@ -3,33 +3,33 @@ from __future__ import annotations
 from .loop import AgentApp
 
 
-HELP = """Commands:
-  /help     show this message
-  /tools    list available tools
-  /todos    show current todos
-  /memory   show long-term memory
-  /mcp      show MCP server and tool status
-  /compact  compact conversation history now
-  /team     show persistent teammates
-  /inbox    read lead inbox
-  /tree [--filter default|no-tools|user-only|labeled-only|all]
-  /jump ID  move active leaf to an existing entry
-  /fork ID  move active leaf to an existing entry; next input creates a sibling branch
-  /clone    clone active branch into a new session file and switch to it
-  /label ID LABEL
-  /exit     quit
+HELP = """可用命令：
+  /help     显示这份帮助
+  /tools    列出已注册工具
+  /todos    查看当前任务列表
+  /memory   查看长期记忆
+  /mcp      查看 MCP server 和工具状态
+  /compact  立即压缩当前会话上下文
+  /team     查看持久队友
+  /inbox    读取 lead inbox
+  /tree [--filter default|no-tools|user-only|labeled-only|all]  查看会话树
+  /jump ID  跳转到已有会话树节点
+  /fork ID  从已有节点分叉；下一条输入会创建兄弟分支
+  /clone    克隆当前 active branch 到新 session 并切换过去
+  /label ID LABEL  给会话树节点打标签
+  /exit     退出
 """
 
 
 def main() -> None:
     app = AgentApp()
     try:
-        print(f"my_agent2 ready. provider={app.provider} model={app.model} workspace={app.workspace}")
-        print("Type /help for commands.\n")
+        print(f"my_agent2 已就绪。provider={app.provider} model={app.model} workspace={app.workspace}")
+        print("输入 /help 查看命令。\n")
 
         while True:
             try:
-                user_input = input("You> ").strip()
+                user_input = input("你> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 return
@@ -55,7 +55,7 @@ def main() -> None:
                 print(app.mcp.report() + "\n")
                 continue
             if user_input == "/compact":
-                print(("Compacted." if app.compact_now() else "Nothing to compact.") + "\n")
+                print(("已压缩当前上下文。" if app.compact_now() else "当前没有需要压缩的内容。") + "\n")
                 continue
             if user_input == "/team":
                 print(app.team.list_all() + "\n")
@@ -74,23 +74,23 @@ def main() -> None:
                 continue
             if user_input.startswith("/jump "):
                 app.jump_to_entry(user_input.split(maxsplit=1)[1].strip())
-                print("Active leaf updated.\n")
+                print("已更新 active leaf。\n")
                 continue
             if user_input.startswith("/fork "):
                 app.fork_from_entry(user_input.split(maxsplit=1)[1].strip())
-                print("Fork point selected. Your next message will create a new branch.\n")
+                print("已选择分叉点。下一条输入会创建新分支。\n")
                 continue
             if user_input == "/clone":
                 new_session_id = app.clone_active_branch()
-                print(f"Cloned active branch into session {new_session_id}.\n")
+                print(f"已将当前 active branch 克隆到 session {new_session_id}。\n")
                 continue
             if user_input.startswith("/label "):
                 _, entry_id, label = user_input.split(maxsplit=2)
                 app.label_entry(entry_id, label)
-                print("Label saved.\n")
+                print("标签已保存。\n")
                 continue
 
-            print("Agent> ", end="", flush=True)
+            print("助手> ", end="", flush=True)
             app.ask(user_input, on_text_delta=lambda text: print(text, end="", flush=True))
             print("\n")
     finally:

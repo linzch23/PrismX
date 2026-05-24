@@ -1,59 +1,54 @@
-# Capability Parity With claude-agent-examples
+# my_agent2 能力清单
 
-This document tracks the original repository's core capabilities against the
-generic `my_agent2` implementation.
+本文记录 `my_agent2` 当前已经具备的核心能力、主要位置和已知差距，方便后续维护。
 
-| Original capability | claude-agent-examples | my_agent2 status | my_agent2 location | Notes |
-|---|---|---:|---|---|
-| CLI entrypoint | `agent.py`, `agent/loop.py` | Done | `src/my_agent2/cli.py`, `src/my_agent2/loop.py` | Packaged with `uv` via `pyproject.toml`. |
-| Model client | Anthropic client directly in loop | Done, generalized | `src/my_agent2/model_client.py` | Supports `deepseek`, `anthropic`, and `openai-compatible`. |
-| Tool-use runner | `agent/runner.py` | Done | `src/my_agent2/runner.py` | Uses provider-neutral blocks and supports parallel safe tool calls. |
-| Tool registry and validation | `agent/tools/base.py`, `registry.py`, `schema.py` | Done | `src/my_agent2/tools/base.py`, `registry.py` | Simpler schema helpers; validates basic JSON schema types. |
-| Shell tool | `run_command` | Done | `src/my_agent2/tools/shell.py` | Workspace-scoped cwd, timeout support. |
-| Web fetch tool | `web_fetch` | Done | `src/my_agent2/tools/web.py` | Text/raw extraction. |
-| File read/write/edit | `read_file`, `write_file`, `edit_file` | Done | `src/my_agent2/tools/filesystem.py` | Workspace escape protection added. Original edit matching is richer. |
-| Search tools | `glob`, `grep` | Done | `src/my_agent2/tools/filesystem.py` | Basic glob/regex search. Original has more pagination/type filters. |
-| Todo planning | `update_todos`, `TodoStore` | Done | `src/my_agent2/tools/state.py` | Same complete-list update model and single `in_progress` rule. |
-| Skills loader | `agent/skills.py`, `load_skill` | Done | `src/my_agent2/skills.py`, `tools/state.py` | Supports nested `SKILL.md`, summaries, `always: true`, and fallback frontmatter parsing before dependencies are installed. |
-| Built-in skills | `skills/*` | Partial | `skills/summarize/SKILL.md` | Only a generic summarize skill is bundled; original has clawhub/github/weather/etc. |
-| System prompt builder | `agent/context.py`, `templates/*` | Done, generalized | `src/my_agent2/context.py`, `templates/system.md` | Removes original roleplay and injects memory, user profile, skills. |
-| Long-term memory | `memory/MEMORY.md` | Done | `src/my_agent2/memory.py` | Writes `memory/MEMORY.md`. |
-| User profile memory | `templates/USER.md` | Done | `templates/USER.md`, `MemoryStore.read_user/write_user` | Updated by compaction. |
-| Episode memory | `memory/YYYY-MM-DD.md` | Done | `MemoryStore.append_episode` | UTC+8 daily episode files. |
-| Raw history log | `memory/history.jsonl` | Done | `MemoryStore.append_history` | User/final assistant history is logged. |
-| Startup archive | `load_unarchived_history`, `compact_startup` | Done | `MemoryStore.load_unarchived_history`, `HistoryCompactor.compact_startup` | Archives unmarked prior-session turns before system prompt construction. |
-| Automatic history compression | `Compactor`, `TokenTracker.should_compact` | Done | `src/my_agent2/compactor.py`, `runner.py`, `memory.py` | Triggers by token threshold or history length fallback. |
-| Token log | `memory/tokens.jsonl` | Done | `TokenLog` | Records provider-neutral input/output token fields using UTC+8 timestamps. |
-| Token aggregations | `stats_by_date`, `stats_by_model` | Done | `TokenLog.stats_by_date`, `stats_by_model` | Basic aggregation supported. |
-| One-shot subagents | `dispatch_subagent` | Done, generalized | `src/my_agent2/subagents`, `tools/dispatch.py` | Generic roles: researcher, analyst, coder, reviewer. |
-| Subagent tool whitelist | `agent/subagents/registry.py` | Done | `src/my_agent2/subagents/registry.py` | Security settings live in code, not prompt templates. |
-| Parallel subagent dispatch | runner safe tool batching | Done | `runner.py`, `DispatchSubagentTool.concurrency_safe` | Independent dispatch calls can run in parallel. |
-| Persistent agent team | `agent/team.py` | Done | `src/my_agent2/team.py` | Named teammates, persistent config, inboxes, threads. |
-| Team tools | `spawn/list/send/read/broadcast` | Done | `src/my_agent2/tools/team.py` | Registered for lead and teammate agents. |
-| Team CLI helpers | `/team`, `/inbox` | Done | `src/my_agent2/cli.py` | Mirrors original operational shortcuts. |
-| Runtime dirs ignored | `memory/`, `.team/` | Done | `.gitignore` | Prevents generated state from being committed. |
-| Teaching examples | `build-agent-example/*` | Not ported | N/A | `my_agent2` is the productized generic agent, not the teaching series. |
-| PPT course material | `ppt/*` | Not ported | N/A | Out of scope for the generic implementation. |
+| 能力 | 状态 | 主要位置 | 说明 |
+|---|---:|---|---|
+| CLI 入口 | 已完成 | `src/my_agent2/cli.py`、`src/my_agent2/loop.py` | 已通过 `pyproject.toml` 打包为 `uv` 项目。 |
+| 模型客户端 | 已完成 | `src/my_agent2/model_client.py` | 支持 `deepseek`、`anthropic` 和 `openai-compatible`。 |
+| 工具调用 runner | 已完成 | `src/my_agent2/runner.py` | 使用 provider-neutral blocks，并支持安全工具并行调用。 |
+| 工具注册与参数校验 | 已完成 | `src/my_agent2/tools/base.py`、`registry.py` | schema helper 较轻量，校验基础 JSON schema 类型。 |
+| shell 工具 | 已完成 | `src/my_agent2/tools/shell.py` | 限定工作区 cwd，支持超时。 |
+| 网页抓取工具 | 已完成 | `src/my_agent2/tools/web.py` | 支持文本提取和原始 HTML。 |
+| 文件读写编辑 | 已完成 | `src/my_agent2/tools/filesystem.py` | 支持工作区逃逸保护。 |
+| 搜索工具 | 已完成 | `src/my_agent2/tools/filesystem.py` | 支持基础 glob/regex 搜索。 |
+| Todo 规划 | 已完成 | `src/my_agent2/tools/state.py` | 保持完整列表覆盖模型，并限制同时只有一个 `in_progress`。 |
+| 技能加载器 | 已完成 | `src/my_agent2/skills.py`、`tools/state.py` | 支持嵌套 `SKILL.md`、技能摘要、`always: true`，并在依赖未安装时使用 fallback frontmatter 解析。 |
+| 内置技能 | 部分完成 | `skills/summarize/SKILL.md` | 当前只内置通用 summarization 技能。 |
+| system prompt 构造 | 已完成 | `src/my_agent2/context.py`、`templates/system.md` | 注入 memory、user profile 和 skills。 |
+| 长期记忆 | 已完成 | `src/my_agent2/memory.py` | 写入 `memory/MEMORY.md`。 |
+| 用户画像记忆 | 已完成 | `templates/USER.md`、`MemoryStore.read_user/write_user` | 由 compaction 更新。 |
+| 情景记忆 | 已完成 | `MemoryStore.append_episode` | 使用 UTC+8 日期文件。 |
+| 原始历史日志 | 已完成 | `MemoryStore.append_history` | 记录用户输入和最终 assistant 输出。 |
+| 启动归档 | 已完成 | `MemoryStore.load_unarchived_history`、`HistoryCompactor.compact_startup` | 在 system prompt 构造前归档未标记的上次会话。 |
+| 自动历史压缩 | 已完成 | `src/my_agent2/compactor.py`、`runner.py`、`memory.py` | 可按 token 阈值或 history 长度 fallback 触发。 |
+| 会话树压缩 | 已完成 | `src/my_agent2/tree_session.py` | `/compact` 会在当前 active branch 追加结构化 compaction entry。 |
+| token 日志 | 已完成 | `TokenLog` | 记录 provider-neutral 的 input/output token 字段，时间使用 UTC+8。 |
+| token 聚合 | 已完成 | `TokenLog.stats_by_date`、`stats_by_model` | 支持基础聚合。 |
+| 一次性子代理 | 已完成 | `src/my_agent2/subagents`、`tools/dispatch.py` | 通用角色：researcher、analyst、coder、reviewer。 |
+| 子代理工具白名单 | 已完成 | `src/my_agent2/subagents/registry.py` | 安全设置写在代码里，不写在 prompt 模板里。 |
+| 并行子代理派遣 | 已完成 | `runner.py`、`DispatchSubagentTool.concurrency_safe` | 独立 dispatch 调用可以并行执行。 |
+| 持久 Agent Team | 已完成 | `src/my_agent2/team.py` | 支持命名队友、持久配置、inbox 和线程。 |
+| Team 工具 | 已完成 | `src/my_agent2/tools/team.py` | 注册给 lead 和 teammate agent。 |
+| Team CLI 快捷命令 | 已完成 | `src/my_agent2/cli.py` | 支持 `/team` 和 `/inbox`。 |
+| 运行期目录忽略 | 已完成 | `.gitignore` | 避免提交运行生成状态。 |
 
-## Remaining Gaps
+## 剩余差距
 
-- File search and edit tools are functional but less feature-rich than the
-  original implementation. The original `grep/glob` support more filters and
-  pagination, and `edit_file` has more fuzzy matching.
-- Bundled skills are intentionally minimal. Add generic skills as the project
-  direction becomes clearer instead of copying every original role-specific skill.
-- No integration test hits a real DeepSeek/Anthropic API in this environment
-  because dependencies and `uv` are not available here.
+- 文件搜索和编辑工具已经可用，但功能仍偏轻量；后续可增加分页、过滤和更强的编辑匹配。
+- 内置技能保持克制。后续应根据项目方向添加通用技能。
+- 当前环境没有跑真实 DeepSeek/Anthropic API 集成测试；已有测试主要使用 fake model。
+- 超大单轮对话的 prefix/suffix 拆分压缩还未完整接入主流程。
 
-## Current Verification
+## 当前验证
 
 - `python3 -m compileall src`
-- Smoke tests for:
-  - file tools and todo tool
-  - provider-neutral tool-call conversion
-  - history compaction with a fake model
-  - three-tier memory writes: `MEMORY.md`, `USER.md`, and daily episode files
-  - startup compaction marker behavior
-  - always-active skills and system prompt injection
-  - message bus and team tools
-  - spawning a teammate thread with a fake model
+- smoke tests 覆盖：
+  - 文件工具和 todo 工具
+  - provider-neutral 工具调用转换
+  - fake model 下的历史压缩
+  - 三层记忆写入：`MEMORY.md`、`USER.md`、每日情景记忆
+  - 启动压缩 marker 行为
+  - always-active skills 和 system prompt 注入
+  - message bus 和 team 工具
+  - 使用 fake model 启动 teammate 线程

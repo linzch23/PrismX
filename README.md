@@ -1,45 +1,43 @@
 # my_agent2
 
-`my_agent2` is a compact, general-purpose Python agent inspired by
-`TheSyart/claude-agent-examples`, but with the teaching-specific roleplay removed
-and the project packaged for `uv`.
+`my_agent2` 是一个本地运行的通用型 Python Agent，面向命令行工作流、工具调用、
+会话树管理、上下文压缩和多 Agent 协作场景。
 
-It includes:
+它目前支持：
 
-- a provider adapter for DeepSeek, Anthropic, and OpenAI-compatible chat APIs
-- streaming assistant text in the main CLI conversation
-- MCP tools from stdio and Streamable HTTP MCP servers
-- workspace file tools: `read_file`, `write_file`, `edit_file`, `glob`, `grep`
-- command and web fetch tools
-- persistent conversation logs and lightweight long-term memory
-- automatic history compression when context grows large
-- a todo tool for explicit task planning
-- loadable skills from `skills/{name}/SKILL.md`
-- generic subagents for isolated research, analysis, coding, and review
-- persistent multi-agent team collaboration with named teammates and inboxes
-- parallel execution for read-only tools and independent subagent calls
+- DeepSeek、Anthropic、OpenAI-compatible 三类模型接口
+- 命令行对话中的流式输出
+- stdio 和 Streamable HTTP 两类 MCP 工具接入
+- 工作区文件工具：`read_file`、`write_file`、`edit_file`、`glob`、`grep`
+- shell 命令执行和网页抓取
+- 持久化会话日志、轻量长期记忆和用户偏好
+- 基于会话树的上下文压缩，压缩入口为明确命令 `/compact`
+- `update_todos` 任务规划工具
+- `skills/{name}/SKILL.md` 技能加载
+- 用于调研、分析、编码、审查的一次性子代理
+- 带命名队友和 inbox 的持久多 Agent 协作
+- 只读工具和独立子代理调用的并行执行
 
-## Quick Start
+## 快速开始
 
 ```bash
 uv sync
 cp .env.example .env
-# edit .env and set DEEPSEEK_API_KEY
+# 编辑 .env，至少填写 DEEPSEEK_API_KEY
 
 uv run my-agent2
 ```
 
-On this Mac, the most reliable local command is:
+在这台 Mac 上，更稳定的启动方式是：
 
 ```bash
 ./run.sh
 ```
 
-`run.sh` resolves the project directory, exports `PYTHONPATH`, changes into the
-repo, and then runs the virtualenv Python entrypoint. This avoids terminal
-current-directory issues and editable-install import issues on this Mac.
+`run.sh` 会自动定位项目目录、设置 `PYTHONPATH`、切换到仓库根目录，并使用虚拟环境里的
+Python 入口启动程序。这样可以避免终端当前目录和 editable install 带来的导入问题。
 
-Default `.env` settings use DeepSeek:
+默认 `.env` 配置使用 DeepSeek：
 
 ```bash
 MY_AGENT_PROVIDER=deepseek
@@ -51,10 +49,12 @@ MY_AGENT_COMPACT_KEEP_MESSAGES=8
 MY_AGENT_STARTUP_COMPACTION=0
 ```
 
-## MCP Tools
+## MCP 工具
 
-`my_agent2` can connect to external MCP servers and expose their tools to the
-agent. Configure servers in `mcp_servers.json` at the project root:
+`my_agent2` 可以连接外部 MCP server，并把远端工具暴露给 Agent 使用。配置文件位于项目根目录的
+`mcp_servers.json`。
+
+示例：
 
 ```json
 {
@@ -78,57 +78,65 @@ agent. Configure servers in `mcp_servers.json` at the project root:
 }
 ```
 
-`transport` may be omitted when `command` or `url` is present. MCP tool names are
-registered as `mcp_{server}_{tool}` with unsafe characters replaced by `_`.
-This first MCP integration exposes tools only; MCP resources and prompts are not
-mapped yet.
+如果配置里提供了 `command` 或 `url`，`transport` 可以省略。MCP 工具会注册为
+`mcp_{server}_{tool}` 形式，非法字符会被替换成 `_`。当前 MCP 集成只暴露工具，
+还没有映射 MCP resources 和 prompts。
 
-Useful commands inside the CLI:
+## 命令行指令
 
-- `/help` - show commands
-- `/tools` - list registered tools
-- `/todos` - show the current todo list
-- `/memory` - show long-term memory
-- `/mcp` - show MCP server status and discovered MCP tools
-- `/compact` - force conversation history compression
-- `/team` - show persistent teammate status
-- `/inbox` - read and clear the lead inbox
-- `/tree [--filter default|no-tools|user-only|labeled-only|all]` - show the JSONL tree session
-- `/jump ID` - move the active leaf to an existing entry
-- `/fork ID` - move the active leaf to an existing entry; the next input creates a sibling branch
-- `/clone` - clone the active branch into a new session file and switch to it
-- `/label ID LABEL` - attach a label to a tree entry
-- `/exit` - quit
+在 CLI 里可以使用这些命令：
 
-Tree sessions are persisted as append-only JSONL files in `sessions/`. The JSONL
-file is the source of truth; in-memory indexes are rebuilt by replaying it.
-`/compact` writes a compaction entry to the active branch and keeps the original
-entries in the file. Legacy `memory/history.jsonl` startup compaction is disabled
-by default; set `MY_AGENT_STARTUP_COMPACTION=1` only if you want startup to call
-the model and archive old memory logs.
+- `/help`：查看命令帮助
+- `/tools`：列出已注册工具
+- `/todos`：查看当前任务列表
+- `/memory`：查看长期记忆
+- `/mcp`：查看 MCP server 状态和发现的 MCP 工具
+- `/compact`：明确触发当前会话分支的上下文压缩
+- `/team`：查看持久队友状态
+- `/inbox`：读取并清空 lead inbox
+- `/tree [--filter default|no-tools|user-only|labeled-only|all]`：查看 JSONL 会话树
+- `/jump ID`：把 active leaf 移到某个历史节点
+- `/fork ID`：从某个历史节点分叉，下一条输入会创建兄弟分支
+- `/clone`：把当前 active branch 克隆成新 session 并切换过去
+- `/label ID LABEL`：给会话树节点打标签
+- `/exit`：退出
 
-## Project Layout
+## 会话树与上下文压缩
+
+会话持久化在 `sessions/` 下的 append-only JSONL 文件里。JSONL 文件是事实来源；
+程序启动时会通过重放文件重建内存索引。
+
+`/compact` 会在当前 active branch 上追加一个 `compaction` 条目：
+
+- 旧上下文被压成结构化 checkpoint summary
+- 最近上下文保留原文
+- 原始历史不会被删除
+- 后续模型上下文会自动使用“压缩摘要 + 最近消息”
+
+压缩是命令式触发，不会被普通自然语言对话误触发。
+
+## 项目结构
 
 ```text
 src/my_agent2/
-  cli.py              CLI entry point
-  loop.py             application wiring
-  runner.py           model/tool execution loop
-  compactor.py        history compression
-  team.py             persistent teammate manager and inbox bus
-  memory.py           logs and long-term notes
-  skills.py           skill loader
-  context.py          system prompt builder
-  tools/              tool implementations
-  subagents/          generic subagent registry
+  cli.py              CLI 入口
+  loop.py             应用装配
+  runner.py           模型与工具调用循环
+  compactor.py        旧版线性历史压缩
+  tree_session.py     会话树、分支、标签和结构化压缩
+  team.py             持久队友管理和 inbox 消息总线
+  memory.py           日志、长期记忆和 token 记录
+  skills.py           技能加载器
+  context.py          system prompt 构造器
+  tools/              内置工具实现
+  subagents/          通用子代理注册表
 templates/
-  system.md           main agent prompt
-  subagents/*.md      role prompts
+  system.md           主 Agent 提示词
+  subagents/*.md      子代理角色提示词
 skills/
-  summarize/SKILL.md  example skill
+  summarize/SKILL.md  示例技能
 ```
 
-## Notes
+## 说明
 
-By default, file tools are scoped to the configured workspace. Relative paths are
-resolved from `MY_AGENT_WORKSPACE` or the current directory.
+默认情况下，文件工具只允许访问配置的工作区。相对路径会从 `MY_AGENT_WORKSPACE` 或当前目录解析。
