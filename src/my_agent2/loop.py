@@ -199,13 +199,14 @@ class AgentApp:
         return reply
 
     def compact_now(self) -> bool:
-        return bool(
-            self.tree.compactActiveBranch(
-                self.session_id,
-                maxContextTokens=self.max_context_tokens,
-                keepRecentTokens=max(1, self.max_context_tokens // 4),
-                summarizer=LlmSummarizer(self.client, self.model),
-            )
+        return bool(self._compact_active_branch())
+
+    def _compact_active_branch(self) -> str | None:
+        return self.tree.compactActiveBranch(
+            self.session_id,
+            maxContextTokens=self.max_context_tokens,
+            keepRecentTokens=max(1, self.max_context_tokens // 4),
+            summarizer=LlmSummarizer(self.client, self.model),
         )
 
     def tree_view(self, filter_mode: str = "default") -> str:

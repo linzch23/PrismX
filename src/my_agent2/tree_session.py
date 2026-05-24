@@ -17,6 +17,7 @@ Pi's TUI or complete agent runtime.
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import IntEnum
@@ -26,6 +27,155 @@ from uuid import uuid4
 
 
 SESSION_VERSION = 1
+
+SUMMARIZATION_SYSTEM_PROMPT = """You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
+
+Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary."""
+
+SUMMARIZATION_PROMPT = """The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+
+Use this EXACT format:
+
+## Goal
+
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+
+## Constraints & Preferences
+
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+
+### Done
+
+- [x] [Completed tasks/changes]
+
+### In Progress
+
+- [ ] [Current work]
+
+### Blocked
+
+- [Issues preventing progress, if any]
+
+## Key Decisions
+
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+
+1. [Ordered list of what should happen next]
+
+## Critical Context
+
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages."""
+
+UPDATE_SUMMARIZATION_PROMPT = """The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+
+Update the existing structured summary with new information. RULES:
+- PRESERVE all existing information from the previous summary
+- ADD new progress, decisions, and context from the new messages
+- UPDATE the Progress section: move items from "In Progress" to "Done" when completed
+- UPDATE "Next Steps" based on what was accomplished
+- PRESERVE exact file paths, function names, and error messages
+- If something is no longer relevant, you may remove it
+
+Use this EXACT format:
+
+## Goal
+
+[Preserve existing goals, add new ones if the task expanded]
+
+## Constraints & Preferences
+
+- [Preserve existing, add new ones discovered]
+
+## Progress
+
+### Done
+
+- [x] [Include previously done items AND newly completed items]
+
+### In Progress
+
+- [ ] [Current work - update based on progress]
+
+### Blocked
+
+- [Current blockers - remove if resolved]
+
+## Key Decisions
+
+- **[Decision]**: [Brief rationale] (preserve all previous, add new)
+
+## Next Steps
+
+1. [Update based on current state]
+
+## Critical Context
+
+- [Preserve important context, add new if needed]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages."""
+
+TURN_PREFIX_SUMMARIZATION_PROMPT = """This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
+
+Summarize the prefix to provide context for the retained suffix:
+
+## Original Request
+
+[What did the user ask for in this turn?]
+
+## Early Progress
+
+- [Key decisions and work done in the prefix]
+
+## Context for Suffix
+
+- [Information needed to understand the retained recent work]
+
+Be concise. Focus on what's needed to understand the kept suffix."""
+
+BRANCH_SUMMARY_PROMPT = """Create a structured summary of this conversation branch for context when returning later.
+
+Use this EXACT format:
+
+## Goal
+
+[What was the user trying to accomplish in this branch?]
+
+## Constraints & Preferences
+
+- [Any constraints, preferences, or requirements mentioned]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+
+### Done
+
+- [x] [Completed tasks/changes]
+
+### In Progress
+
+- [ ] [Work that was started but not finished]
+
+### Blocked
+
+- [Issues preventing progress, if any]
+
+## Key Decisions
+
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+
+1. [What should happen next to continue this work]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages."""
 
 
 class ContextLayer(IntEnum):
@@ -207,23 +357,128 @@ class LlmSummarizer(BaseSummarizer):
         summary_type: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        transcript = "\n\n".join(
-            f"{message.get('role', 'unknown').upper()}:\n{message.get('content', message)}"
-            for message in messages
-        )
-        prompt = (
-            f"Create a concise {summary_type} for an agent tree session.\n"
-            "Preserve goals, constraints, decisions, files, tool evidence, open tasks, and risks.\n\n"
-            f"{transcript}"
+        metadata = metadata or {}
+        prompt = _summary_prompt(
+            messages,
+            summary_type=summary_type,
+            previous_summary=metadata.get("previous_summary"),
         )
         response = self.client.create_message(
             model=self.model,
             max_tokens=self.max_tokens,
-            system="You summarize agent session branches for later context recovery.",
+            system=SUMMARIZATION_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
             tools=[],
         )
         return "\n".join(getattr(block, "text", "") for block in response.content).strip()
+
+
+def _summary_prompt(
+    messages: list[dict[str, Any]],
+    *,
+    summary_type: str,
+    previous_summary: str | None = None,
+) -> str:
+    transcript = _render_summary_messages(messages)
+    if summary_type == "branch_summary":
+        return f"{transcript}\n\n{BRANCH_SUMMARY_PROMPT}".strip()
+    if summary_type == "turn_prefix":
+        return f"{transcript}\n\n{TURN_PREFIX_SUMMARIZATION_PROMPT}".strip()
+    if previous_summary:
+        return (
+            f"{transcript}\n\n"
+            f"<previous-summary>\n{previous_summary.strip()}\n</previous-summary>\n\n"
+            f"{UPDATE_SUMMARIZATION_PROMPT}"
+        ).strip()
+    return f"{transcript}\n\n{SUMMARIZATION_PROMPT}".strip()
+
+
+def _render_summary_messages(messages: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        parts.extend(_serialize_summary_message(message))
+    return "\n\n".join(parts)
+
+
+def _serialize_summary_message(message: dict[str, Any]) -> list[str]:
+    role = str(message.get("role", "unknown"))
+    content = message.get("content")
+    if isinstance(content, str):
+        label = {"user": "User", "assistant": "Assistant"}.get(role, role.title())
+        return [f"[{label}]: {content}"]
+
+    if not isinstance(content, list):
+        return [f"[{role.title()}]: {_summary_content_text(content)}"]
+
+    parts: list[str] = []
+    text_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_calls: list[str] = []
+    tool_results: list[str] = []
+    for block in content:
+        block_type = getattr(block, "type", None)
+        if isinstance(block, dict):
+            block_type = block.get("type", block_type)
+
+        if block_type == "text":
+            text = block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
+            if text:
+                text_parts.append(str(text))
+        elif block_type == "reasoning":
+            text = block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
+            if text:
+                reasoning_parts.append(str(text))
+        elif block_type == "tool_use":
+            if isinstance(block, dict):
+                name = str(block.get("name", ""))
+                tool_input = block.get("input") or {}
+            else:
+                name = str(getattr(block, "name", ""))
+                tool_input = getattr(block, "input", {}) or {}
+            tool_calls.append(f"{name}({_format_tool_args(tool_input)})")
+        elif isinstance(block, dict) and block.get("type") == "tool_result":
+            tool_results.append(_truncate_text(str(block.get("content", "")), 2000))
+        else:
+            text_parts.append(_summary_content_text(block))
+
+    if reasoning_parts:
+        parts.append(f"[Assistant thinking]: {' '.join(reasoning_parts)}")
+    if text_parts:
+        label = "Assistant" if role == "assistant" else "User"
+        parts.append(f"[{label}]: {' '.join(text_parts)}")
+    if tool_calls:
+        parts.append(f"[Assistant tool calls]: {'; '.join(tool_calls)}")
+    for result in tool_results:
+        parts.append(f"[Tool result]: {result}")
+    return parts or [f"[{role.title()}]: {_summary_content_text(content)}"]
+
+
+def _summary_content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(_json_safe(content), ensure_ascii=False, indent=2)
+    except TypeError:
+        return str(content)
+
+
+def _format_tool_args(tool_input: Any) -> str:
+    if not isinstance(tool_input, dict):
+        return repr(tool_input)
+    items = []
+    for key, value in sorted(tool_input.items()):
+        rendered = repr(value)
+        if len(rendered) > 120:
+            rendered = rendered[:117] + "..."
+        items.append(f"{key}={rendered}")
+    return ", ".join(items)
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return text[:max_chars] + f"\n...[truncated {omitted} chars]"
 
 
 class TokenEstimator(Protocol):
@@ -311,6 +566,129 @@ def _to_json(entry: SessionEntry) -> dict[str, Any]:
     data = _json_safe(asdict(entry))
     data["type"] = entry.type
     return data
+
+
+def _append_file_operations(summary: str, entries: list[SessionEntry]) -> str:
+    existing_read, existing_modified = _extract_file_operation_blocks(summary)
+    read_files, modified_files = _collect_file_operations(entries)
+    read_files = sorted(set(existing_read) | set(read_files))
+    modified_files = sorted(set(existing_modified) | set(modified_files))
+    if not read_files and not modified_files:
+        return summary
+
+    summary = _strip_file_operation_blocks(summary)
+
+    blocks = []
+    if read_files:
+        blocks.append("<read-files>\n" + "\n".join(f"- {path}" for path in read_files) + "\n</read-files>")
+    if modified_files:
+        blocks.append(
+            "<modified-files>\n"
+            + "\n".join(f"- {path}" for path in modified_files)
+            + "\n</modified-files>"
+        )
+    return summary.rstrip() + "\n\n" + "\n\n".join(blocks)
+
+
+def _extract_file_operation_blocks(summary: str) -> tuple[list[str], list[str]]:
+    return _extract_paths_from_block(summary, "read-files"), _extract_paths_from_block(
+        summary,
+        "modified-files",
+    )
+
+
+def _extract_paths_from_block(summary: str, tag: str) -> list[str]:
+    paths: list[str] = []
+    for match in re.finditer(rf"<{tag}>\s*(.*?)\s*</{tag}>", summary, re.DOTALL):
+        for line in match.group(1).splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("- "):
+                line = line[2:].strip()
+            paths.append(line)
+    return paths
+
+
+def _strip_file_operation_blocks(summary: str) -> str:
+    summary = re.sub(r"<read-files>\s*.*?\s*</read-files>\s*", "", summary, flags=re.DOTALL)
+    summary = re.sub(r"<modified-files>\s*.*?\s*</modified-files>\s*", "", summary, flags=re.DOTALL)
+    return summary.strip()
+
+
+def _collect_file_operations(entries: list[SessionEntry]) -> tuple[list[str], list[str]]:
+    read_files: set[str] = set()
+    modified_files: set[str] = set()
+    for entry in entries:
+        for tool_call in _iter_tool_calls(entry):
+            name = str(tool_call.get("name", ""))
+            path = _tool_call_path(tool_call)
+            if not path:
+                continue
+            if name == "read_file":
+                read_files.add(path)
+            elif name in {"write_file", "edit_file"}:
+                modified_files.add(path)
+    return sorted(read_files), sorted(modified_files)
+
+
+def _iter_tool_calls(entry: SessionEntry) -> Iterable[dict[str, Any]]:
+    if isinstance(entry, ToolCallEntry):
+        yield entry.toolCall
+        return
+    if not isinstance(entry, MessageEntry):
+        return
+
+    content = entry.message.get("content")
+    if not isinstance(content, list):
+        return
+    for block in content:
+        block_type = getattr(block, "type", None)
+        if isinstance(block, dict):
+            block_type = block.get("type", block_type)
+        if block_type != "tool_use":
+            continue
+
+        if isinstance(block, dict):
+            yield {
+                "name": block.get("name", ""),
+                "input": block.get("input") or {},
+            }
+        else:
+            yield {
+                "name": getattr(block, "name", ""),
+                "input": getattr(block, "input", {}) or {},
+            }
+
+
+def _tool_call_path(tool_call: dict[str, Any]) -> str | None:
+    params = tool_call.get("input")
+    if not isinstance(params, dict):
+        return None
+    path = params.get("path")
+    return str(path) if path else None
+
+
+def _tool_result_use_id(entry: ToolResultEntry) -> str | None:
+    tool_use_id = entry.toolResult.get("tool_use_id")
+    return str(tool_use_id) if tool_use_id else None
+
+
+def _message_has_tool_use(entry: SessionEntry, tool_use_id: str | None = None) -> bool:
+    if not isinstance(entry, MessageEntry):
+        return False
+    content = entry.message.get("content")
+    if not isinstance(content, list):
+        return False
+    for block in content:
+        block_type = getattr(block, "type", None)
+        block_id = getattr(block, "id", None)
+        if isinstance(block, dict):
+            block_type = block.get("type", block_type)
+            block_id = block.get("id", block_id)
+        if block_type == "tool_use" and (tool_use_id is None or block_id == tool_use_id):
+            return True
+    return False
 
 
 def _layer_name(layer: ContextLayer | str | None) -> str:
@@ -589,6 +967,10 @@ class TreeSessionManager:
             summary_type="branch_summary",
             metadata={"oldLeafId": oldLeafId, "targetId": targetId, "commonAncestorId": common},
         )
+        summary = _append_file_operations(
+            summary,
+            self._collect_branch_source_entries(session_id, oldLeafId, common),
+        )
         entry_id = self.append_entry(
             session_id,
             targetId,
@@ -613,7 +995,8 @@ class TreeSessionManager:
         summarizer: SummarizerProtocol | Callable[..., str] | None = None,
     ) -> str | None:
         branch = self.getActiveBranch(session_id)
-        contextable = [entry for entry in branch if self._entry_enters_context(entry)]
+        effective_branch = self._entries_after_latest_compaction(branch)
+        contextable = [entry for entry in effective_branch if self._entry_enters_context(entry)]
         token_before = sum(self.token_estimator.estimate_entry(entry) for entry in contextable)
         if token_before <= maxContextTokens and len(contextable) <= self.compact_keep_messages:
             return None
@@ -628,20 +1011,34 @@ class TreeSessionManager:
         kept = list(reversed(kept))
         if not kept:
             kept = contextable[-self.compact_keep_messages :]
+        kept = self._expand_kept_to_safe_boundary(effective_branch, kept)
         first_kept = kept[0]
         kept_ids = {entry.id for entry in kept}
         compacted = [entry for entry in contextable if entry.id not in kept_ids]
         if not compacted:
             return None
 
-        messages = self._entries_to_context(compacted, max_layer=ContextLayer.L3_TOOL_EVIDENCE)
+        previous_summary = next(
+            (entry.summary for entry in reversed(compacted) if isinstance(entry, CompactionEntry)),
+            None,
+        )
+        messages = self._entries_to_context(
+            [entry for entry in compacted if not isinstance(entry, CompactionEntry)],
+            max_layer=ContextLayer.L3_TOOL_EVIDENCE,
+        )
         summary = self._coerce_summarizer(summarizer).summarize(
             messages,
             summary_type="compaction",
-            metadata={"maxContextTokens": maxContextTokens, "keepRecentTokens": keepRecentTokens},
+            metadata={
+                "maxContextTokens": maxContextTokens,
+                "keepRecentTokens": keepRecentTokens,
+                "previous_summary": previous_summary,
+            },
         )
-        # TODO: implement Pi-style split-turn compaction so tool-result/tool-call boundaries
-        # are never separated when a single turn is larger than keepRecentTokens.
+        summary = _append_file_operations(
+            summary,
+            self._entries_before(branch, first_kept.id),
+        )
         token_after = self.token_estimator.estimate_message(
             {"role": "user", "content": summary}
         ) + sum(self.token_estimator.estimate_entry(entry) for entry in kept)
@@ -980,6 +1377,93 @@ class TreeSessionManager:
                 collected.append(current)
             current = by_id.get(current.parentId) if current.parentId else None
         return list(reversed(collected)), common
+
+    def _collect_branch_source_entries(
+        self,
+        session_id: str,
+        old_leaf_id: str | None,
+        common_id: str | None,
+    ) -> list[SessionEntry]:
+        if old_leaf_id is None:
+            return []
+        collected: list[SessionEntry] = []
+        by_id = self._session(session_id).entriesById
+        current = by_id.get(old_leaf_id)
+        while current and current.id != common_id:
+            if self._is_tree_entry(current):
+                collected.append(current)
+            current = by_id.get(current.parentId) if current.parentId else None
+        return list(reversed(collected))
+
+    @staticmethod
+    def _entries_before(entries: list[SessionEntry], entry_id: str) -> list[SessionEntry]:
+        selected = []
+        for entry in entries:
+            if entry.id == entry_id:
+                break
+            selected.append(entry)
+        return selected
+
+    @staticmethod
+    def _entries_after_latest_compaction(entries: list[SessionEntry]) -> list[SessionEntry]:
+        latest_compaction = next(
+            (entry for entry in reversed(entries) if isinstance(entry, CompactionEntry)),
+            None,
+        )
+        if latest_compaction is None:
+            return entries
+
+        compacted_ids = set(latest_compaction.compactedEntryIds)
+        visible: list[SessionEntry] = [latest_compaction]
+        found_first_kept = False
+        compaction_index = entries.index(latest_compaction)
+        for entry in entries[:compaction_index]:
+            if entry.id == latest_compaction.firstKeptEntryId:
+                found_first_kept = True
+            if found_first_kept and entry.id not in compacted_ids:
+                visible.append(entry)
+        visible.extend(entries[compaction_index + 1 :])
+        return visible
+
+    def _expand_kept_to_safe_boundary(
+        self,
+        entries: list[SessionEntry],
+        kept: list[SessionEntry],
+    ) -> list[SessionEntry]:
+        if not kept:
+            return kept
+        boundary = self._safe_compaction_boundary(entries, kept[0])
+        if boundary is None or boundary.id == kept[0].id:
+            return kept
+
+        expanded: list[SessionEntry] = []
+        include = False
+        for entry in entries:
+            if entry.id == boundary.id:
+                include = True
+            if include and self._entry_enters_context(entry):
+                expanded.append(entry)
+        return expanded or kept
+
+    @staticmethod
+    def _safe_compaction_boundary(
+        entries: list[SessionEntry],
+        first_kept: SessionEntry,
+    ) -> SessionEntry | None:
+        if not isinstance(first_kept, ToolResultEntry):
+            return first_kept
+
+        tool_use_id = _tool_result_use_id(first_kept)
+        first_index = entries.index(first_kept)
+        fallback: SessionEntry | None = None
+        for entry in reversed(entries[:first_index]):
+            if _message_has_tool_use(entry):
+                fallback = fallback or entry
+                if tool_use_id is None or _message_has_tool_use(entry, tool_use_id):
+                    return entry
+            if isinstance(entry, MessageEntry) and entry.message.get("role") == "user":
+                break
+        return fallback or first_kept
 
     def _sibling_branch_ids(self, session: TreeSession, active_ids: set[str]) -> set[str]:
         sibling_ids = set()

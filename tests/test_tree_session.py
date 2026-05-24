@@ -5,11 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from my_agent2.model_client import AgentMessage, TextBlock
 from my_agent2.tree_session import (
     BranchSummaryEntry,
     CompactionEntry,
     ContextLayer,
     FakeSummarizer,
+    LlmSummarizer,
     TreeSessionManager,
 )
 
@@ -242,6 +244,107 @@ class TreeSessionTests(unittest.TestCase):
         before = self.manager.getSessionFilePath(self.session_id).read_text()
         self.assertIn("root", self.manager.render_tree(self.session_id, filter_mode="user-only"))
         self.assertEqual(before, self.manager.getSessionFilePath(self.session_id).read_text())
+
+    def test_llm_summarizer_uses_structured_compaction_prompts(self) -> None:
+        client = FakeSummaryClient("summary")
+        summarizer = LlmSummarizer(client, "fake-model")
+
+        summarizer.summarize(
+            [{"role": "user", "content": "edit src/app.py"}],
+            summary_type="compaction",
+        )
+        first_request = client.requests[-1]
+        self.assertIn("context summarization assistant", first_request["system"])
+        self.assertIn("Use this EXACT format:", first_request["messages"][0]["content"])
+        self.assertIn("## Goal", first_request["messages"][0]["content"])
+
+        summarizer.summarize(
+            [{"role": "assistant", "content": "new progress"}],
+            summary_type="compaction",
+            metadata={"previous_summary": "## Goal\nold"},
+        )
+        update_prompt = client.requests[-1]["messages"][0]["content"]
+        self.assertIn("<previous-summary>", update_prompt)
+        self.assertIn("UPDATE the Progress section", update_prompt)
+
+    def test_compaction_appends_file_operations_from_tool_calls(self) -> None:
+        self.append_user("root")
+        self.manager.append_tool_call(
+            self.session_id,
+            {"id": "call_1", "name": "read_file", "input": {"path": "src/app.py"}},
+        )
+        self.append_assistant("read complete")
+        self.manager.append_tool_call(
+            self.session_id,
+            {"id": "call_2", "name": "edit_file", "input": {"path": "src/app.py"}},
+        )
+        self.append_assistant("edit complete")
+        self.append_user("recent")
+        self.append_assistant("recent answer")
+
+        compaction_id = self.manager.compactActiveBranch(
+            self.session_id,
+            maxContextTokens=1,
+            keepRecentTokens=1,
+            summarizer=FakeSummarizer(),
+        )
+        summary = self.manager.sessions[self.session_id].entriesById[compaction_id].summary
+
+        self.assertIn("<read-files>", summary)
+        self.assertIn("- src/app.py", summary)
+        self.assertIn("<modified-files>", summary)
+
+    def test_compaction_does_not_keep_orphan_tool_result(self) -> None:
+        self.append_user("root")
+        assistant_id = self.manager.append_message(
+            self.session_id,
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "checking"},
+                    {
+                        "type": "tool_use",
+                        "id": "call_1",
+                        "name": "read_file",
+                        "input": {"path": "sample.txt"},
+                    },
+                ],
+            },
+        )
+        self.manager.append_tool_call(
+            self.session_id,
+            {"id": "call_1", "name": "read_file", "input": {"path": "sample.txt"}},
+        )
+        self.manager.append_tool_result(
+            self.session_id,
+            {"type": "tool_result", "tool_use_id": "call_1", "content": "file contents"},
+        )
+
+        compaction_id = self.manager.compactActiveBranch(
+            self.session_id,
+            maxContextTokens=1,
+            keepRecentTokens=1,
+            summarizer=FakeSummarizer(),
+        )
+        compaction = self.manager.sessions[self.session_id].entriesById[compaction_id]
+        context_text = "\n".join(
+            json.dumps(message, ensure_ascii=False)
+            for message in self.manager.buildModelContext(self.session_id)
+        )
+
+        self.assertEqual(compaction.firstKeptEntryId, assistant_id)
+        self.assertIn('"type": "tool_use"', context_text)
+        self.assertIn('"type": "tool_result"', context_text)
+
+
+class FakeSummaryClient:
+    def __init__(self, summary: str) -> None:
+        self.summary = summary
+        self.requests: list[dict] = []
+
+    def create_message(self, **kwargs) -> AgentMessage:
+        self.requests.append(kwargs)
+        return AgentMessage(content=[TextBlock(self.summary)], stop_reason="stop")
 
 
 if __name__ == "__main__":
