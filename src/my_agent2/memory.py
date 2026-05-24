@@ -131,7 +131,7 @@ class MemoryStore:
         if not note:
             return ""
         title = title or (note[:60] + "..." if len(note) > 60 else note)
-        slug = re.sub(r"[^\w\s-]", "", title.lower().strip())
+        slug = re.sub(r"[^\w\s一-鿿-]", "", title.lower().strip())
         slug = re.sub(r"\s+", "-", slug)[:80]
         now = datetime.now(UTC8)
         uri = _operation_to_uri(category, slug, now)
@@ -294,11 +294,15 @@ class MemoryStore:
         categories = {
             "profile": "mem://user/profile",
             "preferences": "mem://user/preferences/",
+            "entities": "mem://user/entities/",
             "events": "mem://user/events/",
             "decisions": "mem://project/decisions/",
             "constraints": "mem://project/constraints/",
+            "open_tasks": "mem://project/open_tasks/",
             "cases": "mem://agent/cases/",
             "patterns": "mem://agent/patterns/",
+            "tools": "mem://agent/tools/",
+            "skills": "mem://agent/skills/",
         }
         has_items = False
         for name, prefix in categories.items():
@@ -378,7 +382,7 @@ class TokenLog:
 def _slugify(text: str) -> str:
     import re
     text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"[^\w\s一-鿿-]", "", text)
     text = re.sub(r"\s+", "-", text)
     return text[:80] if len(text) > 80 else text
 

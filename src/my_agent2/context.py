@@ -57,6 +57,11 @@ class RuntimeContextBuilder:
         lines = ["## Runtime Context"]
         total = 0
         for result in results:
+            # 过滤已归档和内部敏感记忆
+            if result.get("status") == "archived":
+                continue
+            if result.get("sensitivity") in ("sensitive", "internal"):
+                continue
             uri = result.get("uri", "")
             neighbors = self.backend.neighbors(uri, limit=3)
             link_lines = ""

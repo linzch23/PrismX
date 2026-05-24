@@ -73,10 +73,15 @@ class AgentApp:
             compact_keep_messages=self.compact_keep_messages,
         )
         custom_session_id = os.getenv("MY_AGENT_SESSION_ID")
-        if custom_session_id and custom_session_id not in self.tree.listSessions():
+        existing = self.tree.listSessions()
+        if custom_session_id and custom_session_id not in existing:
             self.session_id = self.tree.createSession(custom_session_id, cwd=str(self.workspace))
+        elif custom_session_id:
+            self.session_id = custom_session_id
+        elif existing:
+            self.session_id = existing[0]
         else:
-            self.session_id = custom_session_id or self.tree.listSessions()[0]
+            self.session_id = self.tree.createSession("default", cwd=str(self.workspace))
         self.tree.resumeSession(self.session_id)
 
         self.registry = self._build_registry()
