@@ -35,8 +35,9 @@ On this Mac, the most reliable local command is:
 ./run.sh
 ```
 
-`run.sh` calls `uv --directory ... run --no-editable my-agent2`, which avoids
-terminal current-directory issues and editable-install import issues.
+`run.sh` resolves the project directory, exports `PYTHONPATH`, changes into the
+repo, and then runs the virtualenv Python entrypoint. This avoids terminal
+current-directory issues and editable-install import issues on this Mac.
 
 Default `.env` settings use DeepSeek:
 
@@ -47,6 +48,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 MY_AGENT_MAX_CONTEXT_TOKENS=64000
 MY_AGENT_COMPACT_THRESHOLD=0.7
 MY_AGENT_COMPACT_KEEP_MESSAGES=8
+MY_AGENT_STARTUP_COMPACTION=0
 ```
 
 ## MCP Tools
@@ -91,13 +93,19 @@ Useful commands inside the CLI:
 - `/compact` - force conversation history compression
 - `/team` - show persistent teammate status
 - `/inbox` - read and clear the lead inbox
+- `/tree [--filter default|no-tools|user-only|labeled-only|all]` - show the JSONL tree session
+- `/jump ID` - move the active leaf to an existing entry
+- `/fork ID` - move the active leaf to an existing entry; the next input creates a sibling branch
+- `/clone` - clone the active branch into a new session file and switch to it
+- `/label ID LABEL` - attach a label to a tree entry
 - `/exit` - quit
 
-Compression is implemented in `src/my_agent2/compactor.py`. It is called by
-`AgentRunner` after a complete assistant turn. Summaries are written to
-`memory/compactions.md`, durable context is appended to `memory/MEMORY.md`, and
-the live `history` is replaced by one summary message plus the latest safe
-message window.
+Tree sessions are persisted as append-only JSONL files in `sessions/`. The JSONL
+file is the source of truth; in-memory indexes are rebuilt by replaying it.
+`/compact` writes a compaction entry to the active branch and keeps the original
+entries in the file. Legacy `memory/history.jsonl` startup compaction is disabled
+by default; set `MY_AGENT_STARTUP_COMPACTION=1` only if you want startup to call
+the model and archive old memory logs.
 
 ## Project Layout
 

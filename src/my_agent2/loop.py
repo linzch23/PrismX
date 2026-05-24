@@ -57,6 +57,7 @@ class AgentApp:
         self.max_context_tokens = int(os.getenv("MY_AGENT_MAX_CONTEXT_TOKENS", "64000"))
         self.compact_threshold = float(os.getenv("MY_AGENT_COMPACT_THRESHOLD", "0.7"))
         self.compact_keep_messages = int(os.getenv("MY_AGENT_COMPACT_KEEP_MESSAGES", "8"))
+        self.startup_compaction = _env_flag("MY_AGENT_STARTUP_COMPACTION", default=False)
 
         self.client = build_model_client(self.provider)
         self.memory = MemoryStore(self.root / "memory", user_file=self.root / "templates" / "USER.md")
@@ -84,12 +85,13 @@ class AgentApp:
             max_context_tokens=self.max_context_tokens,
             threshold=self.compact_threshold,
         )
-        unarchived = self.memory.load_unarchived_history()
-        if len(unarchived) >= 2:
-            try:
-                self.compactor.compact_startup(unarchived)
-            except Exception as exc:
-                print(f"[warning] startup compaction failed: {exc}")
+        if self.startup_compaction:
+            unarchived = self.memory.load_unarchived_history()
+            if len(unarchived) >= 2:
+                try:
+                    self.compactor.compact_startup(unarchived)
+                except Exception as exc:
+                    print(f"[warning] startup compaction failed: {exc}")
         context = ContextBuilder(self.root / "templates", self.skills, self.memory)
         self.system_prompt = context.build(workspace=self.workspace)
         self.runner = AgentRunner(
@@ -228,3 +230,10 @@ class AgentApp:
 
     def close(self) -> None:
         self.mcp.close()
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}

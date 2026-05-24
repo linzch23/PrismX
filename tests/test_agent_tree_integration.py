@@ -52,6 +52,7 @@ class AgentTreeIntegrationTests(unittest.TestCase):
                     "MY_AGENT_PROVIDER": "deepseek",
                     "MY_AGENT_MODEL": "fake-model",
                     "MY_AGENT_SESSION_ID": "",
+                    "MY_AGENT_STARTUP_COMPACTION": "0",
                 },
                 clear=False,
             )
@@ -74,6 +75,24 @@ class AgentTreeIntegrationTests(unittest.TestCase):
     def session_rows(self, app: AgentApp) -> list[dict]:
         path = app.tree.getSessionFilePath(app.session_id)
         return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+    def test_startup_compaction_is_disabled_by_default(self) -> None:
+        memory_dir = self.root / "memory"
+        memory_dir.mkdir()
+        (memory_dir / "history.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps({"role": "user", "content": "old question"}),
+                    json.dumps({"role": "assistant", "content": "old answer"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        app, client = self.make_app([])
+
+        self.assertEqual(client.requests, [])
+        self.assertTrue(app.tree.buildModelContext(app.session_id) == [])
 
     def test_ask_writes_user_and_assistant_entries_to_jsonl(self) -> None:
         app, client = self.make_app([AgentMessage([TextBlock("assistant reply")], "stop")])
