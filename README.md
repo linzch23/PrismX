@@ -3,35 +3,35 @@
 `my_agent2` 是一个本地运行的通用型 Python Agent，面向命令行工作流、工具调用、
 会话树管理、上下文压缩和多 Agent 协作场景。
 
-## Context & Memory Architecture
+## 上下文与记忆架构
 
-my_agent2 features a multi-layered context and memory system:
+my_agent2 采用多层上下文与记忆系统：
 
-- **TreeSession** — Append-only JSONL conversation tree with branching, jumping, forking, and cloning. The single source of truth for raw conversation data.
-- **ContextFS** — Durable context/memory object store with L0 (abstract), L1 (overview), and L2 (full body) layers. Objects are URI-addressable.
-- **MemoryGraph** — Lightweight link index between ContextFS URIs (supports, contradicts, updates, related, derived_from).
-- **RuntimeContextBuilder** — Per-turn memory recall that searches ContextFS and injects relevant context into every model call.
-- **SessionMemoryCommitter** — Bridges tree compaction to long-term memory; triggered by `/compact`.
+- **TreeSession（树形会话）** — 追加式 JSONL 会话树，支持分支、跳转、分叉和克隆。原始会话数据的唯一事实来源。
+- **ContextFS（上下文文件系统）** — 持久化上下文/记忆对象存储，分为 L0（摘要）、L1（概览）和 L2（完整正文）三层。对象以 URI 寻址。
+- **MemoryGraph（记忆图谱）** — ContextFS URI 之间的轻量级链接索引（支持、矛盾、更新、相关、派生自）。
+- **RuntimeContextBuilder（运行时上下文构建器）** — 每轮调用前搜索 ContextFS 并将相关记忆注入模型上下文。
+- **SessionMemoryCommitter（会话记忆提交器）** — 连接树压缩与长期记忆的桥梁，由 `/compact` 触发。
 
-### Environment Variables
+### 环境变量
 
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `MY_AGENT_RUNTIME_CONTEXT_LIMIT` | `6` | Max search results for runtime context |
-| `MY_AGENT_RUNTIME_CONTEXT_MAX_CHARS` | `12000` | Character budget for runtime context output |
-| `MY_AGENT_CONTEXT_BACKEND` | `local` | Context backend (MVP: `local` only) |
-| `MY_AGENT_AUTO_LINK_FANOUT` | `5` | Auto-link candidate memory count |
-| `MY_AGENT_AUTO_LINK_MIN_CONFIDENCE` | `0.3` | Minimum confidence for auto-link |
+| `MY_AGENT_RUNTIME_CONTEXT_LIMIT` | `6` | 运行时上下文搜索返回条数上限 |
+| `MY_AGENT_RUNTIME_CONTEXT_MAX_CHARS` | `12000` | 运行时上下文输出字符预算 |
+| `MY_AGENT_CONTEXT_BACKEND` | `local` | 上下文后端选择（MVP 仅 `local`） |
+| `MY_AGENT_AUTO_LINK_FANOUT` | `5` | 自动链接候选记忆数 |
+| `MY_AGENT_AUTO_LINK_MIN_CONFIDENCE` | `0.3` | 自动链接最低置信度 |
 
-### Context Tools
+### 上下文工具
 
-| Tool | Description |
+| 工具 | 说明 |
 |---|---|
-| `search_context` | Search structured memory by keyword (L0/L1/L2) |
-| `read_context` | Read a context object by URI |
-| `list_context` | List objects under a URI prefix |
-| `show_context_links` | Show memory graph links |
-| `remember` | Write durable notes to long-term memory (upgraded) |
+| `search_context` | 按关键词搜索结构化记忆（覆盖 L0/L1/L2） |
+| `read_context` | 按 URI 读取上下文对象 |
+| `list_context` | 列出指定 URI 前缀下的对象 |
+| `show_context_links` | 查看记忆图谱链接关系 |
+| `remember` | 将持久化笔记写入长期记忆（已升级） |
 
 它目前支持：
 
