@@ -3,6 +3,36 @@
 `my_agent2` 是一个本地运行的通用型 Python Agent，面向命令行工作流、工具调用、
 会话树管理、上下文压缩和多 Agent 协作场景。
 
+## Context & Memory Architecture
+
+my_agent2 features a multi-layered context and memory system:
+
+- **TreeSession** — Append-only JSONL conversation tree with branching, jumping, forking, and cloning. The single source of truth for raw conversation data.
+- **ContextFS** — Durable context/memory object store with L0 (abstract), L1 (overview), and L2 (full body) layers. Objects are URI-addressable.
+- **MemoryGraph** — Lightweight link index between ContextFS URIs (supports, contradicts, updates, related, derived_from).
+- **RuntimeContextBuilder** — Per-turn memory recall that searches ContextFS and injects relevant context into every model call.
+- **SessionMemoryCommitter** — Bridges tree compaction to long-term memory; triggered by `/compact`.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `MY_AGENT_RUNTIME_CONTEXT_LIMIT` | `6` | Max search results for runtime context |
+| `MY_AGENT_RUNTIME_CONTEXT_MAX_CHARS` | `12000` | Character budget for runtime context output |
+| `MY_AGENT_CONTEXT_BACKEND` | `local` | Context backend (MVP: `local` only) |
+| `MY_AGENT_AUTO_LINK_FANOUT` | `5` | Auto-link candidate memory count |
+| `MY_AGENT_AUTO_LINK_MIN_CONFIDENCE` | `0.3` | Minimum confidence for auto-link |
+
+### Context Tools
+
+| Tool | Description |
+|---|---|
+| `search_context` | Search structured memory by keyword (L0/L1/L2) |
+| `read_context` | Read a context object by URI |
+| `list_context` | List objects under a URI prefix |
+| `show_context_links` | Show memory graph links |
+| `remember` | Write durable notes to long-term memory (upgraded) |
+
 它目前支持：
 
 - DeepSeek、Anthropic、OpenAI-compatible 三类模型接口
