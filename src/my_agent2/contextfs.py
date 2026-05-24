@@ -124,7 +124,7 @@ class ContextFS:
     # ---- search ----
 
     def search_objects(self, query: str, limit: int = 5, *, include_sensitive: bool = False) -> list[dict[str, Any]]:
-        tokens = query.lower().split()
+        tokens = _tokenize_query(query.lower())
         scored = []
         for line in self._read_index_lines():
             if not line.strip():
@@ -203,3 +203,28 @@ def _is_expired(ttl: str) -> bool:
         return datetime.now(timezone.utc) > expiry
     except ValueError:
         return False
+
+
+def _has_cjk(text: str) -> bool:
+    """Check if text contains CJK characters."""
+    for ch in text:
+        cp = ord(ch)
+        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF or 0xF900 <= cp <= 0xFAFF:
+            return True
+    return False
+
+
+def _tokenize_query(query: str) -> list[str]:
+    """Split query into search tokens with CJK bigram expansion.
+
+    Whitespace-separated tokens pass through unchanged.
+    Long CJK tokens (>3 chars) are expanded into character bigrams
+    so "我喜欢暗色主题" also matches stored "暗色主题".
+    """
+    tokens = query.split()
+    expanded = list(tokens)
+    for token in tokens:
+        if len(token) > 3 and _has_cjk(token):
+            for i in range(len(token) - 1):
+                expanded.append(token[i:i + 2])
+    return expanded

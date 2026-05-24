@@ -133,16 +133,17 @@ class MemoryStore:
         title = title or (note[:60] + "..." if len(note) > 60 else note)
         slug = re.sub(r"[^\w\s-]", "", title.lower().strip())
         slug = re.sub(r"\s+", "-", slug)[:80]
-        now = datetime.now(UTC8).strftime("%Y/%m/%d")
-        uri = f"mem://user/{category}/{now}/{slug}"
+        now = datetime.now(UTC8)
+        uri = _operation_to_uri(category, slug, now)
+        content_rel = uri.replace("://", "/") + ".md"
         obj = ContextObject(
             uri=uri, context_type="memory", title=title,
             abstract=note[:200], overview=note,
-            content_path=f"mem/user/{category}/{now}/{slug}.md",
+            content_path=content_rel,
             source="manual", trust_score=0.8, sensitivity="public",
             status="active", tags=[category],
             metadata={"written_by": "remember_tool"}, digest="",
-            created_at=datetime.now(UTC8).isoformat(), updated_at="",
+            created_at=now.isoformat(), updated_at="",
         )
         self._cfs.write_object(obj, note)
         self._cfs.append_diff({"action": "remember", "uri": uri, "reason": "manual remember"})
@@ -250,6 +251,7 @@ class MemoryStore:
             "preferences": "mem://user/preferences/",
             "events": "mem://user/events/",
             "decisions": "mem://project/decisions/",
+            "constraints": "mem://project/constraints/",
             "cases": "mem://agent/cases/",
             "patterns": "mem://agent/patterns/",
         }
