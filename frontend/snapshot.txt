@@ -1,4 +1,4 @@
-uid=1_0 RootWebArea "my_agent2 Workbench" url="http://127.0.0.1:8765/"
+uid=1_0 RootWebArea "PrismaX Workbench" url="http://127.0.0.1:8765/"
   uid=1_1 complementary "Global navigation"
     uid=1_2 button "m2" description="Agent"
     uid=1_3 button "+" description="New task"

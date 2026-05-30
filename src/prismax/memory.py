@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .contextfs import ContextFS, ContextObject
+from .knowledge import KnowledgeObject, LocalSemanticVectorIndex, WikiKnowledgeBase
 from .memory_graph import MemoryGraph
 
 
@@ -31,6 +32,9 @@ class MemoryStore:
         # Memory OS: ContextFS + MemoryGraph
         self._cfs = ContextFS(self.memory_dir)
         self._graph = MemoryGraph(self.memory_dir / "context" / "links.jsonl")
+        self._wiki = WikiKnowledgeBase(self.memory_dir)
+        self._semantic_index = LocalSemanticVectorIndex(self.memory_dir)
+        self.last_committed_knowledge_uris: list[str] = []
         self._auto_link_client = None  # set externally by AgentApp
         self._auto_link_model = ""
 
@@ -205,6 +209,7 @@ class MemoryStore:
         now = datetime.now(UTC8)
         date_part = now.strftime("%Y/%m/%d")
         slug = session_uri.split("/")[-1]
+        self.last_committed_knowledge_uris = []
 
         # write session archive
         archive_obj = ContextObject(
@@ -222,7 +227,7 @@ class MemoryStore:
         # process operations
         valid_categories = {"profile", "preferences", "entities", "events",
                             "decisions", "constraints", "open_tasks",
-                            "cases", "patterns", "tools", "skills"}
+                            "cases", "patterns", "tools", "skills", "research"}
         for op in operations:
             action = op.get("action", "")
             category = op.get("category", "")
@@ -254,6 +259,22 @@ class MemoryStore:
                 digest="", created_at=now.isoformat(), updated_at="",
             )
             self._cfs.write_object(mem_obj, op.get("content", op.get("overview", "")))
+            knowledge = KnowledgeObject(
+                title=op.get("title", key),
+                summary=op.get("abstract") or op.get("overview", ""),
+                content=op.get("content", op.get("overview", "")),
+                source_session=metadata.get("session_id", session_uri),
+                source_branch=(metadata.get("debug") or {}).get("activeLeafId", ""),
+                source_compaction=metadata.get("compaction_id", ""),
+                trust_score=float(op.get("trust_score", 0.6)),
+                tags=op.get("tags", []) + [category],
+                updated_at=now.isoformat(),
+                knowledge_type=_knowledge_type_for_category(category),
+                uri=uri,
+            )
+            wiki_path = self._wiki.write(knowledge, category=category, key=key)
+            self._semantic_index.upsert(knowledge, path=wiki_path)
+            self.last_committed_knowledge_uris.append(uri)
 
             # derived_from link
             self._graph.add_link(uri, session_uri, "derived_from", 0.95,
@@ -274,7 +295,15 @@ class MemoryStore:
         return session_uri
 
     def search_memory(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
-        return self._cfs.search_objects(query, limit=limit)
+        results = self._cfs.search_objects(query, limit=limit)
+        seen = {item.get("uri") for item in results}
+        for item in self._semantic_index.search(query, limit=limit):
+            if item.get("uri") not in seen:
+                results.append(item)
+                seen.add(item.get("uri"))
+            if len(results) >= limit:
+                break
+        return results[:limit]
 
     def read_context(self, uri: str, layer: str = "auto") -> str:
         try:
@@ -414,6 +443,18 @@ def _category_prefix(category: str) -> str:
     if category in ("cases", "patterns", "tools", "skills"):
         return f"mem://agent/{category}/"
     return f"mem://user/events/"
+
+
+def _knowledge_type_for_category(category: str) -> str:
+    if category in {"profile", "preferences", "entities", "events"}:
+        return "user"
+    if category in {"cases", "patterns"}:
+        return "pattern"
+    if category in {"tools", "skills"}:
+        return "architecture"
+    if category == "research":
+        return "research"
+    return "project"
 
 
 def _count_bigram_overlap(title_a: str, title_b: str) -> int:

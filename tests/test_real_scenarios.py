@@ -61,7 +61,7 @@ def make_env(tmp: Path) -> dict[str, str]:
 
 def run_app(tmp: Path, env: dict[str, str], turns: list[str]) -> tuple[Any, list[str]]:
     """Run AgentApp through a list of user inputs, return app and replies."""
-    from my_agent2.loop import AgentApp
+    from prismax.loop import AgentApp
     from unittest.mock import patch
 
     replies = []
@@ -247,7 +247,7 @@ def scenario_4_cross_session():
     check(len(results) >= 1, "搜索'SQLite'能找到数据库记忆")
 
     # 验证 context tools 可用
-    from my_agent2.tools.context import SearchContextTool
+    from prismax.tools.context import SearchContextTool
     tool = SearchContextTool(app_b.memory)
     output = tool.execute(query="队列", limit=5)
     check("Redis" in output, "search_context 工具搜索'队列'找到 Redis")
@@ -315,7 +315,7 @@ def main():
     ]
 
     print("=" * 60)
-    print("my_agent2 真实场景测试")
+    print("prismax 真实场景测试")
     print(f"Provider: {os.getenv('MY_AGENT_PROVIDER', 'deepseek')}")
     print(f"Model: {os.getenv('MY_AGENT_MODEL', 'deepseek-chat')}")
     print("=" * 60)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from helpers import make_temp_dir
 
-from my_agent2.tree_session import TreeSessionManager, FakeSummarizer
+from prismax.tree_session import TreeSessionManager, FakeSummarizer
 
 
 class FakeMemoryStore:

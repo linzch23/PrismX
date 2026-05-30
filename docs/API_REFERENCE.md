@@ -1,4 +1,4 @@
-# my_agent2 接口文档
+# PrismaX 接口文档
 
 > 面向前后端对接的完整 API 参考文档
 > 版本: feat/context-memory-tree-fusion · 更新: 2026-05-24
@@ -7,7 +7,7 @@
 
 ## 1. 系统概述
 
-my_agent2 是一个本地 Python Agent 框架。核心差异化能力在上下文 (Context) 和记忆 (Memory) 系统。
+PrismaX 是一个本地 Python Agent 框架。核心差异化能力在上下文 (Context) 和记忆 (Memory) 系统。
 
 ### 1.1 模块架构
 

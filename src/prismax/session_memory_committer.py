@@ -101,6 +101,17 @@ class SessionMemoryCommitter:
             operations=operations,
             metadata=metadata,
         )
+        knowledge_uris = list(getattr(self.memory_store, "last_committed_knowledge_uris", []))
+        if hasattr(self.tree, "appendKnowledgeCommit"):
+            try:
+                self.tree.appendKnowledgeCommit(
+                    session_id,
+                    compaction_id=compaction_id,
+                    knowledge_uris=knowledge_uris,
+                    archive_uri=archive_uri,
+                )
+            except Exception:
+                pass
         return archive_uri
 
 

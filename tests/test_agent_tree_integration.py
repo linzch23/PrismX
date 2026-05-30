@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from my_agent2.loop import AgentApp
-from my_agent2.model_client import AgentMessage, TextBlock, ToolUseBlock, _to_openai_messages
-from my_agent2.tree_session import MessageEntry
+from prismax.loop import AgentApp
+from prismax.model_client import AgentMessage, TextBlock, ToolUseBlock, _to_openai_messages
+from prismax.tree_session import MessageEntry
 
 
 class FakeClient:
@@ -65,7 +65,7 @@ class AgentTreeIntegrationTests(unittest.TestCase):
 
     def make_app(self, responses: list[AgentMessage]) -> tuple[AgentApp, FakeClient]:
         client = FakeClient(responses)
-        build_patch = patch("my_agent2.loop.build_model_client", return_value=client)
+        build_patch = patch("prismax.loop.build_model_client", return_value=client)
         self.patchers.append(build_patch)
         for patcher in self.patchers:
             patcher.start()

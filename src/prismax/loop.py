@@ -21,6 +21,7 @@ from .skills import SkillsLoader
 from .subagents import SubagentRegistry, SubagentSpec
 from .team import MessageBus, TeammateManager
 from .tree_session import LlmSummarizer, TreeSessionManager
+from .working_set import WorkingSetBuilder, WorkingSet
 from .tools import (
     EditFileTool,
     GlobTool,
@@ -125,6 +126,8 @@ class AgentApp:
             limit=runtime_limit,
             max_chars=runtime_chars,
         )
+        self.working_set_builder = WorkingSetBuilder(self.tree)
+        self.last_working_set: WorkingSet | None = None
 
         self.runner = AgentRunner(
             client=self.client,
@@ -219,14 +222,28 @@ class AgentApp:
         on_tool_call: Callable[[Any], None] | None = None,
         on_tool_result: Callable[[dict[str, str]], None] | None = None,
     ) -> str:
-        # Build runtime context from user input and rebuild system prompt
-        runtime_context = self.runtime_context_builder.build(user_input)
-        self.runner.system_prompt = self.context_builder_obj.build(
-            workspace=self.workspace, runtime_context=runtime_context,
-        )
-
         self.tree.append_message(self.session_id, {"role": "user", "content": user_input})
         self.memory.append_history("user", user_input)
+        debug = self.tree.debugBuildModelContext(self.session_id)
+        runtime_context = self.runtime_context_builder.build(
+            user_input,
+            recall_scope={
+                "session_id": self.session_id,
+                "active_branch_entry_ids": debug.get("activePathEntryIds", []),
+                "project": self.workspace.name,
+            },
+        )
+        self.last_working_set = self.working_set_builder.build(
+            session_id=self.session_id,
+            current_task=user_input,
+            task_state=self.todos.render(),
+            runtime_recall=runtime_context,
+            recall_results=self.runtime_context_builder.last_results,
+        )
+        self.runner.system_prompt = self.context_builder_obj.build(
+            workspace=self.workspace,
+            runtime_context=self.last_working_set.render(),
+        )
         prompt_history = self.tree.buildModelContext(self.session_id)
 
         def record_tool_call(block: Any) -> None:
@@ -305,6 +322,18 @@ class AgentApp:
 
     def label_entry(self, entry_id: str, label: str) -> None:
         self.tree.addLabel(self.session_id, entry_id, label)
+
+    def working_context_debug(self) -> dict[str, Any]:
+        if self.last_working_set is not None:
+            return self.last_working_set.debug()
+        debug = self.tree.debugBuildModelContext(self.session_id)
+        return {
+            "session_id": self.session_id,
+            "active_leaf_id": debug.get("activeLeafId"),
+            "active_branch_entry_ids": debug.get("activePathEntryIds", []),
+            "active_branch_context_messages": len(self.tree.buildModelContext(self.session_id)),
+            "recall_result_uris": [],
+        }
 
     def close(self) -> None:
         self.mcp.close()

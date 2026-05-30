@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from my_agent2.team import MessageBus, TeammateManager, VALID_MESSAGE_TYPES
+from prismax.team import MessageBus, TeammateManager, VALID_MESSAGE_TYPES
 
 from .base import Tool, object_schema
 

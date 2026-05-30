@@ -27,7 +27,7 @@ HELP = """可用命令：
 def main() -> None:
     app = AgentApp()
     try:
-        print(f"my_agent2 已就绪。provider={app.provider} model={app.model} workspace={app.workspace}")
+        print(f"prismax 已就绪。provider={app.provider} model={app.model} workspace={app.workspace}")
         print("输入 /help 查看命令。\n")
 
         while True:
@@ -55,6 +55,11 @@ def main() -> None:
                 print(app.memory.render_memory() + "\n")
                 continue
             if user_input == "/context":
+                import json
+
+                print("# Working Set")
+                print(json.dumps(app.working_context_debug(), ensure_ascii=False, indent=2))
+                print("\n# Recent ContextObjects")
                 results = app.memory.list_context(limit=20)
                 if not results:
                     print("(No context objects.)\n")

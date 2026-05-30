@@ -1,4 +1,4 @@
-# my_agent2 Coding Agent UI Spec
+# PrismaX Coding Agent UI Spec
 
 ## Information Architecture
 

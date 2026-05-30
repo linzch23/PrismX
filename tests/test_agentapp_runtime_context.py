@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir, make_fake_model_client
 
-from my_agent2.tree_session import TreeSessionManager, FakeSummarizer
-from my_agent2.context import ContextBuilder, RuntimeContextBuilder
-from my_agent2.context_backend import LocalContextBackend
+from prismax.tree_session import TreeSessionManager, FakeSummarizer
+from prismax.context import ContextBuilder, RuntimeContextBuilder
+from prismax.context_backend import LocalContextBackend
 
 
 class FakeMemoryStore:

@@ -52,7 +52,7 @@ def main() -> None:
     port = int(os.getenv("MY_AGENT_WEB_PORT", str(DEFAULT_PORT)))
     state = WebState(root)
     server = ThreadingHTTPServer((host, port), _handler_factory(state))
-    print(f"my_agent2 web 已就绪：http://{host}:{port}")
+    print(f"prismax web 已就绪：http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -64,7 +64,7 @@ def main() -> None:
 
 def _handler_factory(state: WebState):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "my_agent2-web/0.1"
+        server_version = "prismax-web/0.1"
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)

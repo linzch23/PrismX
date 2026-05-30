@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Append-only tree sessions for my_agent2.
+"""Append-only tree sessions for prismax.
 
 本模块实现 JSONL 作为事实来源的会话树：每个条目都有 `id` 和 `parentId`，
 当前上下文由 active leaf 所在分支构造，并支持标签、分支摘要、上下文压缩
@@ -19,6 +19,26 @@ from uuid import uuid4
 
 
 SESSION_VERSION = 1
+
+EVENT_MESSAGE_APPENDED = "message_appended"
+EVENT_TOOL_CALLED = "tool_called"
+EVENT_TOOL_RESULT_RECORDED = "tool_result_recorded"
+EVENT_BRANCH_JUMPED = "branch_jumped"
+EVENT_BRANCH_FORKED = "branch_forked"
+EVENT_BRANCH_CLONED = "branch_cloned"
+EVENT_BRANCH_LABELED = "branch_labeled"
+EVENT_COMPACTION_CREATED = "compaction_created"
+EVENT_KNOWLEDGE_COMMITTED = "knowledge_committed"
+EVENT_SESSION_RESUMED = "session_resumed"
+EVENT_ENTRY_APPENDED = "entry_appended"
+
+STATE_REASON_EVENTS = {
+    "jump": EVENT_BRANCH_JUMPED,
+    "fork": EVENT_BRANCH_FORKED,
+    "clone": EVENT_BRANCH_CLONED,
+    "resume": EVENT_SESSION_RESUMED,
+    "append": EVENT_ENTRY_APPENDED,
+}
 
 SUMMARIZATION_SYSTEM_PROMPT = """You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
 
@@ -302,6 +322,17 @@ class TreeSession:
     updatedAt: str = ""
 
 
+@dataclass
+class ExperienceEvent:
+    id: str
+    type: str
+    entryType: str
+    sessionId: str
+    parentId: str | None
+    timestamp: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class SummarizerProtocol(Protocol):
     def summarize(
         self,
@@ -558,6 +589,36 @@ def _to_json(entry: SessionEntry) -> dict[str, Any]:
     data = _json_safe(asdict(entry))
     data["type"] = entry.type
     return data
+
+
+def _entry_to_experience_event(entry: SessionEntry) -> ExperienceEvent:
+    event_type = entry.metadata.get("eventType")
+    if not event_type:
+        if isinstance(entry, MessageEntry):
+            event_type = EVENT_MESSAGE_APPENDED
+        elif isinstance(entry, ToolCallEntry):
+            event_type = EVENT_TOOL_CALLED
+        elif isinstance(entry, ToolResultEntry):
+            event_type = EVENT_TOOL_RESULT_RECORDED
+        elif isinstance(entry, LabelEntry):
+            event_type = EVENT_BRANCH_LABELED
+        elif isinstance(entry, CompactionEntry):
+            event_type = EVENT_COMPACTION_CREATED
+        elif isinstance(entry, SessionStateEntry):
+            event_type = STATE_REASON_EVENTS.get(entry.reason, EVENT_ENTRY_APPENDED)
+        elif isinstance(entry, CustomEntry) and entry.customType:
+            event_type = entry.customType
+        else:
+            event_type = entry.type
+    return ExperienceEvent(
+        id=entry.id,
+        type=str(event_type),
+        entryType=entry.type,
+        sessionId=entry.sessionId,
+        parentId=entry.parentId,
+        timestamp=entry.timestamp,
+        metadata=dict(entry.metadata),
+    )
 
 
 def _append_file_operations(summary: str, entries: list[SessionEntry]) -> str:
@@ -827,7 +888,10 @@ class TreeSessionManager:
             {
                 "type": "message",
                 "message": _json_safe(message),
-                "metadata": {"contextLayer": ContextLayer.L2_SELECTED_MESSAGES.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L2_SELECTED_MESSAGES.name,
+                    "eventType": EVENT_MESSAGE_APPENDED,
+                },
             },
         )
 
@@ -839,7 +903,10 @@ class TreeSessionManager:
             {
                 "type": "tool_call",
                 "toolCall": _json_safe(tool_call),
-                "metadata": {"contextLayer": ContextLayer.L0_METADATA.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L0_METADATA.name,
+                    "eventType": EVENT_TOOL_CALLED,
+                },
             },
         )
 
@@ -851,7 +918,10 @@ class TreeSessionManager:
             {
                 "type": "tool_result",
                 "toolResult": _json_safe(tool_result),
-                "metadata": {"contextLayer": ContextLayer.L3_TOOL_EVIDENCE.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L3_TOOL_EVIDENCE.name,
+                    "eventType": EVENT_TOOL_RESULT_RECORDED,
+                },
             },
         )
 
@@ -935,9 +1005,44 @@ class TreeSessionManager:
                 "type": "label",
                 "targetId": entry_id,
                 "label": label,
-                "metadata": {"contextLayer": ContextLayer.L0_METADATA.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L0_METADATA.name,
+                    "eventType": EVENT_BRANCH_LABELED,
+                },
             },
         )
+
+    def appendKnowledgeCommit(
+        self,
+        session_id: str,
+        *,
+        compaction_id: str,
+        knowledge_uris: list[str],
+        archive_uri: str,
+        parent_id: str | None = None,
+    ) -> str:
+        session = self._session(session_id)
+        return self.append_entry(
+            session_id,
+            session.activeLeafId if parent_id is None else parent_id,
+            {
+                "type": "custom",
+                "customType": EVENT_KNOWLEDGE_COMMITTED,
+                "data": {
+                    "compaction_id": compaction_id,
+                    "knowledge_uris": list(knowledge_uris),
+                    "archive_uri": archive_uri,
+                },
+                "metadata": {
+                    "contextLayer": ContextLayer.L0_METADATA.name,
+                    "eventType": EVENT_KNOWLEDGE_COMMITTED,
+                },
+            },
+        )
+
+    def experienceEvents(self, session_id: str) -> list[ExperienceEvent]:
+        session = self._session(session_id)
+        return [_entry_to_experience_event(entry) for entry in session.entries]
 
     def get_label(self, session_id: str, entry_id: str) -> str | None:
         return self._session(session_id).labels.get(entry_id)
@@ -973,7 +1078,12 @@ class TreeSessionManager:
                 "commonAncestorId": common,
                 "summarizedEntryIds": [entry.id for entry in summary_entries],
                 "summary": summary,
-                "metadata": {"contextLayer": ContextLayer.L1_SUMMARY.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L1_SUMMARY.name,
+                    "eventType": "branch_summary_created",
+                    "sourceBranchLeafId": oldLeafId,
+                    "targetEntryId": targetId,
+                },
             },
         )
         self._append_state(session_id, entry_id, "jump")
@@ -1044,7 +1154,11 @@ class TreeSessionManager:
                 "firstKeptEntryId": first_kept.id,
                 "tokenEstimateBefore": token_before,
                 "tokenEstimateAfter": token_after,
-                "metadata": {"contextLayer": ContextLayer.L1_SUMMARY.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L1_SUMMARY.name,
+                    "eventType": EVENT_COMPACTION_CREATED,
+                    "sourceBranchLeafId": self._session(session_id).activeLeafId,
+                },
             },
         )
 
@@ -1099,6 +1213,8 @@ class TreeSessionManager:
     jumpToEntry = jumpToEntry
     forkFromEntry = forkFromEntry
     cloneActiveBranch = cloneActiveBranch
+    append_knowledge_commit = appendKnowledgeCommit
+    experience_events = experienceEvents
     add_label = addLabel
     createBranchSummary = createBranchSummary
     compactActiveBranch = compactActiveBranch
@@ -1124,7 +1240,11 @@ class TreeSessionManager:
             timestamp=_now(),
             activeLeafId=active_leaf_id,
             reason=reason,
-            metadata={"contextLayer": ContextLayer.L0_METADATA.name},
+            metadata={
+                "contextLayer": ContextLayer.L0_METADATA.name,
+                "eventType": STATE_REASON_EVENTS.get(reason, EVENT_ENTRY_APPENDED),
+                "activeLeafId": active_leaf_id,
+            },
         )
         self.storage.append_line(session_id, entry)
         self._apply_entry(session, entry)

@@ -730,7 +730,7 @@ async function runTreeAction(action) {
   const selected = selectedTreeNode();
   if (action !== "clone" && !selected) return;
   if (!state.apiMode) {
-    showToast(`演示模式：${action} 需要 my_agent2 Web API。`);
+    showToast(`演示模式：${action} 需要 PrismaX Web API。`);
     return;
   }
 
@@ -771,7 +771,7 @@ async function createNewSession() {
           id: "new-demo-message",
           role: "assistant",
           time: "new",
-          text: "演示模式已创建本地新会话。启动 my_agent2 Web API 后会调用 POST /api/sessions 创建真实 session。",
+          text: "演示模式已创建本地新会话。启动 PrismaX Web API 后会调用 POST /api/sessions 创建真实 session。",
           tools: [],
         },
       ],

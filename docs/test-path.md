@@ -5,7 +5,7 @@
   $env:PYTHONPATH="src"
   $env:MY_AGENT_SESSION_ID="default"
 
-  python -m my_agent2
+  python -m prismax
 
   ---
   第1步：验证工具注册
