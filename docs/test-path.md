@@ -47,7 +47,7 @@
   /compact
 
   预期结果： 看到类似输出：
-  [memory] session archive: ctx://sessions/archives/2026/05/24/default-xxxx
+  [memory] session archive: ctx://sessiontrees/archives/2026/05/24/default-xxxx
   已压缩当前上下文。
   如果没有 [memory] 行，说明消息量还没达到压缩阈值，再聊几轮后重试。
 
@@ -79,7 +79,7 @@
   预期结果： 列出所有 ContextObject，每行包含 URI、类型、标题和信任度：
   - mem://user/preferences/2026/05/24/暗色主题 [memory] 暗色主题 trust=0.8
   - mem://project/constraints/2026/05/24/python-311 [memory] Python 3.11 trust=0.8
-  - ctx://sessions/archives/2026/05/24/default-xxxx [session] Session Archive trust=0.7
+  - ctx://sessiontrees/archives/2026/05/24/default-xxxx [session] Session Archive trust=0.7
 
   ---
   第7步：测试上下文搜索
@@ -106,7 +106,7 @@
   输入：
   用 show_context_links 查看上一步那个 URI 的链接关系
 
-  预期结果： 显示 derived_from → ctx://sessions/archives/... 链接，表明这条记忆来源于哪个 session archive。
+  预期结果： 显示 derived_from → ctx://sessiontrees/archives/... 链接，表明这条记忆来源于哪个 session archive。
 
   ---
   第10步：验证运行时上下文注入

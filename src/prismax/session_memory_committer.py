@@ -40,10 +40,19 @@ class NoopMemoryExtractor:
 
 
 class SessionMemoryCommitter:
-    def __init__(self, tree: Any, memory_store: Any, extractor: MemoryExtractor) -> None:
+    def __init__(
+        self,
+        tree: Any,
+        memory_store: Any,
+        extractor: MemoryExtractor,
+        tree_memory: Any | None = None,
+        knowledge_compiler: Any | None = None,
+    ) -> None:
         self.tree = tree
         self.memory_store = memory_store
         self.extractor = extractor
+        self.tree_memory = tree_memory
+        self.knowledge_compiler = knowledge_compiler
 
     def commit_compaction(self, session_id: str, compaction_id: str) -> str:
         # Read compaction entry
@@ -75,7 +84,7 @@ class SessionMemoryCommitter:
         # Generate archive URI
         now = datetime.now(timezone.utc)
         date_part = now.strftime("%Y/%m/%d")
-        archive_uri = f"ctx://sessions/archives/{date_part}/{session_id}-{compaction_id}"
+        archive_uri = f"ctx://sessiontrees/archives/{date_part}/{session_id}-{compaction_id}"
 
         metadata = {
             "session_id": session_id,
@@ -87,12 +96,22 @@ class SessionMemoryCommitter:
             "debug": debug,
         }
 
-        # Extract memory operations
+        # Extract long-term memory operations from the active path checkpoint.
         operations, error = self.extractor.extract(
             session_uri=archive_uri, summary=summary, metadata=metadata,
         )
         if error:
             metadata["extraction_error"] = error
+
+        # Promote stable Tree Memory into long-term knowledge.
+        if self.tree_memory is not None and self.knowledge_compiler is not None:
+            tree_candidates = self.tree_memory.promotion_candidates(session_id)
+            operations.extend(
+                self.knowledge_compiler.compile_tree_memory(
+                    tree_candidates,
+                    session_uri=archive_uri,
+                )
+            )
 
         # Commit
         self.memory_store.commit_session_archive(

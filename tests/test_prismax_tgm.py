@@ -23,7 +23,7 @@ from prismax.working_set import WorkingSetBuilder
 class PrismaXTGMEventTests(unittest.TestCase):
     def test_experience_events_replay_semantics(self):
         tmp = make_temp_dir()
-        tree = TreeSessionManager(session_dir=tmp / "sessions")
+        tree = TreeSessionManager(session_dir=tmp / "sessiontrees")
         sid = "default"
         root = tree.append_message(sid, {"role": "user", "content": "root"})
         tree.append_tool_result(sid, {"type": "tool_result", "tool_use_id": "t1", "content": "ok"})
@@ -32,10 +32,10 @@ class PrismaXTGMEventTests(unittest.TestCase):
             sid,
             compaction_id="c1",
             knowledge_uris=["mem://project/decisions/tgm"],
-            archive_uri="ctx://sessions/archives/x",
+            archive_uri="ctx://sessiontrees/archives/x",
         )
 
-        reloaded = TreeSessionManager(session_dir=tmp / "sessions")
+        reloaded = TreeSessionManager(session_dir=tmp / "sessiontrees")
         events = reloaded.experienceEvents(sid)
         event_types = [event.type for event in events]
         self.assertIn(EVENT_MESSAGE_APPENDED, event_types)
@@ -47,7 +47,7 @@ class PrismaXTGMEventTests(unittest.TestCase):
 class PrismaXWorkingSetTests(unittest.TestCase):
     def test_working_set_uses_active_branch_and_recent_tool_result(self):
         tmp = make_temp_dir()
-        tree = TreeSessionManager(session_dir=tmp / "sessions", compact_keep_messages=1)
+        tree = TreeSessionManager(session_dir=tmp / "sessiontrees", compact_keep_messages=1)
         sid = "default"
         root = tree.append_message(sid, {"role": "user", "content": "root"})
         tree.append_message(sid, {"role": "assistant", "content": "base"})
@@ -81,7 +81,7 @@ class PrismaXKnowledgeTests(unittest.TestCase):
         tmp = make_temp_dir()
         store = MemoryStore(tmp / "memory")
         uri = store.commit_session_archive(
-            session_uri="ctx://sessions/archives/2026/05/30/s1-c1",
+            session_uri="ctx://sessiontrees/archives/2026/05/30/s1-c1",
             summary="TGM compaction summary",
             operations=[
                 {
@@ -102,7 +102,7 @@ class PrismaXKnowledgeTests(unittest.TestCase):
                 "debug": {"activeLeafId": "leaf-b"},
             },
         )
-        self.assertEqual(uri, "ctx://sessions/archives/2026/05/30/s1-c1")
+        self.assertEqual(uri, "ctx://sessiontrees/archives/2026/05/30/s1-c1")
         wiki_path = tmp / "memory" / "Wiki" / "Project" / "tgm-runtime.md"
         self.assertTrue(wiki_path.exists())
         wiki_text = wiki_path.read_text(encoding="utf-8")
@@ -165,3 +165,4 @@ class PrismaXBranchSafeRecallTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

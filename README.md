@@ -68,7 +68,6 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 MY_AGENT_MAX_CONTEXT_TOKENS=64000
 MY_AGENT_COMPACT_THRESHOLD=0.7
 MY_AGENT_COMPACT_KEEP_MESSAGES=8
-MY_AGENT_STARTUP_COMPACTION=0
 ```
 
 ### 2. 选择启动方式
@@ -121,7 +120,7 @@ $env:PYTHONPATH="src"; uv run python -m prismax.server
 - 脚本会自动定位项目根目录、设置 `PYTHONPATH`，并使用 `.venv/bin/python` 启动程序。
 
 Web 工作台复用同一个 `AgentApp` 应用层，通过 HTTP/SSE 暴露聊天流、会话树、active branch、
-context debug、工具、MCP 和 team 状态。会话仍然持久化在 `sessions/*.jsonl`，JSONL 仍是事实来源。
+context debug、工具、MCP 和 team 状态。会话仍然持久化在 `sessiontrees/*.jsonl`，JSONL 仍是事实来源。
 
 ## MCP 工具
 
@@ -177,7 +176,7 @@ context debug、工具、MCP 和 team 状态。会话仍然持久化在 `session
 
 ## 会话树与上下文压缩
 
-会话持久化在 `sessions/` 下的 append-only JSONL 文件里。JSONL 文件是事实来源；
+会话持久化在 `sessiontrees/` 下的 append-only JSONL 文件里。JSONL 文件是事实来源；
 程序启动时会通过重放文件重建内存索引。
 
 `/compact` 会在当前 active branch 上追加一个 `compaction` 条目：
@@ -215,3 +214,4 @@ skills/
 ## 说明
 
 默认情况下，文件工具只允许访问配置的工作区。相对路径会从 `MY_AGENT_WORKSPACE` 或当前目录解析。
+

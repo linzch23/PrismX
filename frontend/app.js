@@ -28,7 +28,7 @@ const demoRun = {
           name: "show_context_links",
           status: "done",
           input: { uri: "mem://project/decisions/runtime-context", limit: 5 },
-          output: "derived_from -> ctx://sessions/archives/2026/05/24/default-c1\nrelated -> mem://agent/patterns/context-budget",
+          output: "derived_from -> ctx://sessiontrees/archives/2026/05/24/default-c1\nrelated -> mem://agent/patterns/context-budget",
         },
         {
           id: "t3",
@@ -844,7 +844,7 @@ function renderReadContextTool(tool) {
 
 function renderRememberTool(tool) {
   nodes.vizContent.replaceChildren(
-    card("记忆写入路径", "remember 会写入结构化 ContextObject，同时保留旧版 MEMORY.md 兼容。", storageMap(tool)),
+    card("记忆写入路径", "remember 默认写入 Tree Memory；显式长期记忆会写入结构化 ContextObject。", storageMap(tool)),
     card("Memory Commit", "长期记忆不是每轮随意写入；关键沉淀来自 remember 或 compaction 后的 SessionMemoryCommitter。", layerStack("L0")),
     card("写入证据", "diffs.jsonl 记录变更审计，links.jsonl 记录 MemoryGraph 关系。", rawBlock({ input: tool.input, output: tool.output })),
   );
@@ -1638,3 +1638,4 @@ nodes.composer.addEventListener("submit", async (event) => {
 
 render();
 loadData();
+

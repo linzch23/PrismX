@@ -7,36 +7,20 @@ from helpers import make_temp_dir
 from prismax.memory import MemoryStore
 
 
-class MemoryOSLegacyTests(unittest.TestCase):
+class MemoryOSCoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = make_temp_dir()
         self.mem_dir = self.tmp / "memory"
         self.store = MemoryStore(self.mem_dir)
 
-    def test_read_write_append_memory_still_works(self):
-        self.store.write_memory("# Test\n- item 1")
-        content = self.store.read_memory()
-        self.assertIn("item 1", content)
-        self.store.append_memory("item 2")
-        content2 = self.store.read_memory()
-        self.assertIn("item 2", content2)
-
-    def test_append_history_and_load_unarchived(self):
-        self.store.append_history("user", "hello")
-        self.store.append_history("assistant", "hi there")
-        unarchived = self.store.load_unarchived_history()
-        self.assertEqual(len(unarchived), 2)
-        self.assertEqual(unarchived[0]["role"], "user")
-        self.assertEqual(unarchived[1]["role"], "assistant")
+    def test_legacy_linear_memory_files_are_not_created(self):
+        self.assertFalse((self.mem_dir / "MEMORY.md").exists())
+        self.assertFalse((self.mem_dir / "history.jsonl").exists())
+        self.assertFalse((self.mem_dir / "compactions.md").exists())
 
     def test_read_write_user(self):
         self.store.write_user("Name: Test User")
         self.assertEqual(self.store.read_user(), "Name: Test User")
-
-    def test_append_compaction(self):
-        self.store.append_compaction(stamp="2026-01-01T00:00:00Z", summary="Test compaction.", old_count=10)
-        compactions = (self.mem_dir / "compactions.md").read_text()
-        self.assertIn("Test compaction", compactions)
 
 
 class MemoryOSNewAPITests(unittest.TestCase):
@@ -51,10 +35,9 @@ class MemoryOSNewAPITests(unittest.TestCase):
         result = self.store.read_context(uri, layer="auto")
         self.assertIn("tabs over spaces", result)
 
-    def test_remember_note_also_writes_legacy_memory(self):
+    def test_remember_note_does_not_write_legacy_memory(self):
         self.store.remember_note("Important project fact", category="events")
-        legacy = (self.mem_dir / "MEMORY.md").read_text(encoding="utf-8")
-        self.assertIn("Important project fact", legacy)
+        self.assertFalse((self.mem_dir / "MEMORY.md").exists())
 
     def test_commit_session_archive_writes_archive_and_memory_objects(self):
         ops = [{
@@ -68,12 +51,12 @@ class MemoryOSNewAPITests(unittest.TestCase):
             "links": [],
         }]
         archive_uri = self.store.commit_session_archive(
-            session_uri="ctx://sessions/archives/2026/05/24/s1-c1",
+            session_uri="ctx://sessiontrees/archives/2026/05/24/s1-c1",
             summary="Compaction summary text.",
             operations=ops,
             metadata={"session_id": "s1", "compaction_id": "c1"},
         )
-        self.assertIn("ctx://sessions/archives", archive_uri)
+        self.assertIn("ctx://sessiontrees/archives", archive_uri)
 
         mem_results = self.store.search_memory("SQLite", limit=5)
         self.assertEqual(len(mem_results), 1)
@@ -82,7 +65,7 @@ class MemoryOSNewAPITests(unittest.TestCase):
     def test_invalid_operation_goes_to_quarantine(self):
         ops = [{"action": "invalid_action", "category": "events", "key": "bad"}]
         self.store.commit_session_archive(
-            session_uri="ctx://sessions/archives/2026/05/24/s2-c1",
+            session_uri="ctx://sessiontrees/archives/2026/05/24/s2-c1",
             summary="Test.",
             operations=ops,
             metadata={},
@@ -91,5 +74,6 @@ class MemoryOSNewAPITests(unittest.TestCase):
         self.assertGreaterEqual(len(results), 1)
 
     def test_no_current_messages_jsonl_created(self):
-        current = self.mem_dir / "context" / "sessions" / "current"
-        self.assertFalse(current.exists(), "sessions/current/messages.jsonl must not exist")
+        current = self.mem_dir / "context" / "sessiontrees" / "current"
+        self.assertFalse(current.exists(), "sessiontrees/current/messages.jsonl must not exist")
+

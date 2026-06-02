@@ -12,11 +12,7 @@ class FakeMemoryStore:
     def commit_session_archive(self, session_uri, summary, operations, metadata):
         self.archive_calls.append({"session_uri": session_uri, "operations": operations})
         return session_uri
-    # legacy stubs
-    def read_memory(self): return ""
     def read_user(self): return ""
-    def load_unarchived_history(self): return []
-    def append_history(self, *a): pass
 
 
 class FakeCommitter:
@@ -24,13 +20,13 @@ class FakeCommitter:
         self.commits = []
     def commit_compaction(self, session_id, compaction_id):
         self.commits.append((session_id, compaction_id))
-        return f"ctx://sessions/archives/2026/05/24/{session_id}-{compaction_id}"
+        return f"ctx://sessiontrees/archives/2026/05/24/{session_id}-{compaction_id}"
 
 
 class CompactMemoryCommitTests(unittest.TestCase):
     def setUp(self):
         self.tmp = make_temp_dir()
-        session_dir = self.tmp / "sessions"
+        session_dir = self.tmp / "sessiontrees"
         session_dir.mkdir()
         self.tree = TreeSessionManager(
             session_dir=session_dir,
@@ -61,3 +57,4 @@ class CompactMemoryCommitTests(unittest.TestCase):
         self.fake_committer.commit_compaction(self.session_id, cid)
         self.assertEqual(len(self.fake_committer.commits), 1)
         self.assertEqual(self.fake_committer.commits[0], (self.session_id, cid))
+

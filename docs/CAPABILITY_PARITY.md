@@ -15,13 +15,11 @@
 | Todo 规划 | 已完成 | `src/prismax/tools/state.py` | 保持完整列表覆盖模型，并限制同时只有一个 `in_progress`。 |
 | 技能加载器 | 已完成 | `src/prismax/skills.py`、`tools/state.py` | 支持嵌套 `SKILL.md`、技能摘要、`always: true`，并在依赖未安装时使用 fallback frontmatter 解析。 |
 | 内置技能 | 部分完成 | `skills/summarize/SKILL.md` | 当前只内置通用 summarization 技能。 |
-| system prompt 构造 | 已完成 | `src/prismax/context.py`、`templates/system.md` | 注入 memory、user profile 和 skills。 |
-| 长期记忆 | 已完成 | `src/prismax/memory.py`、`contextfs.py`、`memory_graph.py` | ContextFS-backed Memory OS with structured memory objects, URI-addressable with L0/L1/L2 layers, MemoryGraph relationship indexing, session archiving from tree compaction, runtime context injection per model call. Legacy MEMORY.md compatibility preserved. |
+| system prompt 构造 | 已完成 | `src/prismax/context.py`、`templates/system.md` | 注入 Runtime Recall、user profile 和 skills。 |
+| 长期记忆 | 已完成 | `src/prismax/memory.py`、`contextfs.py`、`memory_graph.py` | ContextFS-backed Memory OS with structured memory objects, URI-addressable with L0/L1/L2 layers, MemoryGraph relationship indexing, session archiving from tree compaction, runtime context injection per model call. Legacy MEMORY.md compatibility removed. |
 | 用户画像记忆 | 已完成 | `templates/USER.md`、`MemoryStore.read_user/write_user` | 由 compaction 更新。 |
-| 情景记忆 | 已完成 | `MemoryStore.append_episode` | 使用 UTC+8 日期文件。 |
-| 原始历史日志 | 已完成 | `MemoryStore.append_history` | 记录用户输入和最终 assistant 输出。 |
-| 启动归档 | 已完成 | `MemoryStore.load_unarchived_history`、`HistoryCompactor.compact_startup` | 在 system prompt 构造前归档未标记的上次会话。 |
-| 自动历史压缩 | 已完成 | `src/prismax/compactor.py`、`runner.py`、`memory.py` | 可按 token 阈值或 history 长度 fallback 触发。 |
+| Tree Memory | 已完成 | `src/prismax/tree_memory.py` | 当前会话树内短期共享经验，URI 使用 `tree://...`。 |
+| SessionTrees 事实源 | 已完成 | `sessiontrees/*.jsonl`、`TreeSessionManager` | 保存 TreeSession append-only JSONL，替代旧线性 history。 |
 | 会话树压缩 | 已完成 | `src/prismax/tree_session.py` | `/compact` 会在当前 active branch 追加结构化 compaction entry。 |
 | token 日志 | 已完成 | `TokenLog` | 记录 provider-neutral 的 input/output token 字段，时间使用 UTC+8。 |
 | token 聚合 | 已完成 | `TokenLog.stats_by_date`、`stats_by_model` | 支持基础聚合。 |
@@ -46,9 +44,9 @@
 - smoke tests 覆盖：
   - 文件工具和 todo 工具
   - provider-neutral 工具调用转换
-  - fake model 下的历史压缩
-  - 三层记忆写入：`MEMORY.md`、`USER.md`、每日情景记忆
-  - 启动压缩 marker 行为
+  - fake model 下的 TreeSession 压缩
+  - TGM 三层召回：Active Path、Tree Memory、Long-term Knowledge
   - always-active skills 和 system prompt 注入
   - message bus 和 team 工具
   - 使用 fake model 启动 teammate 线程
+

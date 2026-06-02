@@ -20,8 +20,5 @@ Always-active skill content:
 
 {{ runtime_context or "(None)" }}
 
-Long-term memory:
-{{ memory }}
-
 User profile:
 {{ user_profile }}

@@ -23,7 +23,7 @@ def load_session_records(
     session_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     session_id = _safe_session_id(session_id)
-    session_dir = session_dir or Path("sessions")
+    session_dir = session_dir or Path("sessiontrees")
     path = session_dir / f"{session_id}.jsonl"
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"session not found: {session_id}")
@@ -42,7 +42,7 @@ def load_session_records(
 
 
 def list_session_summaries(session_dir: Path | None = None) -> list[dict[str, Any]]:
-    session_dir = session_dir or Path("sessions")
+    session_dir = session_dir or Path("sessiontrees")
     if not session_dir.exists():
         return []
     summaries = []
@@ -232,10 +232,23 @@ def records_to_node_detail(records: list[dict[str, Any]], node_id: str) -> dict[
 
 def memory_payload(memory_dir: Path | None = None) -> dict[str, Any]:
     memory_dir = memory_dir or Path("memory")
-    path = memory_dir / "MEMORY.md"
-    if not path.exists():
-        return {"exists": False, "memory": ""}
-    return {"exists": True, "memory": path.read_text(encoding="utf-8")}
+    index_path = memory_dir / "context" / "index.jsonl"
+    objects = []
+    if index_path.exists():
+        for line in index_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                objects.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return {
+        "exists": memory_dir.exists(),
+        "memory": "",
+        "objects": objects,
+        "treeMemoryDir": str(memory_dir / "tree"),
+        "wikiDir": str(memory_dir / "Wiki"),
+    }
 
 
 def _safe_session_id(session_id: str) -> str:

@@ -77,7 +77,11 @@ class UpdateTodosTool(Tool):
 
 class RememberTool(Tool):
     name = "remember"
-    description = "Append a durable note to long-term memory. category: preferences|events|decisions|constraints|cases|patterns|tools|skills|entities|open_tasks|profile"
+    description = (
+        "Write reusable memory. By default this writes Tree Memory for the current session tree. "
+        "Use scope='long_term' only for durable cross-project facts. "
+        "category: preferences|events|decisions|constraints|cases|patterns|tools|skills|entities|open_tasks|profile"
+    )
 
     def __init__(self, memory_store) -> None:
         self.memory_store = memory_store
@@ -88,20 +92,47 @@ class RememberTool(Tool):
             "note": {"type": "string", "minLength": 1},
             "category": {"type": "string"},
             "title": {"type": "string"},
+            "scope": {"type": "string", "enum": ["tree", "long_term"]},
+            "memory_type": {
+                "type": "string",
+                "enum": [
+                    "conclusion",
+                    "decision",
+                    "constraint",
+                    "todo",
+                    "finding",
+                    "hypothesis",
+                    "discarded_option",
+                ],
+            },
         }, required=["note"])
 
-    def execute(self, note: str, category: str = "events", title: str | None = None) -> str:
+    def execute(
+        self,
+        note: str,
+        category: str = "events",
+        title: str | None = None,
+        scope: str = "tree",
+        memory_type: str | None = None,
+    ) -> str:
         valid = {"profile", "preferences", "entities", "events",
                  "decisions", "constraints", "open_tasks",
                  "cases", "patterns", "tools", "skills"}
         if category not in valid:
             return f"Error: invalid category '{category}'. Valid: {', '.join(sorted(valid))}"
+        if hasattr(self.memory_store, "remember"):
+            uri = self.memory_store.remember(
+                note,
+                category=category,
+                title=title,
+                scope=scope,
+                memory_type=memory_type,
+            )
+            return f"Remembered: {uri}"
         if hasattr(self.memory_store, "remember_note"):
             uri = self.memory_store.remember_note(note, category=category, title=title)
             return f"Remembered: {uri}"
-        # legacy fallback
-        self.memory_store.append_memory(note)
-        return "Remembered."
+        return "Error: memory store does not support TGM remember."
 
 
 class LoadSkillTool(Tool):

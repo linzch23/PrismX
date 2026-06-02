@@ -278,7 +278,7 @@ def _entry_id(payload: dict[str, Any]) -> str:
 def _sessions_payload(app: AgentApp) -> dict[str, Any]:
     return {
         "activeSessionId": app.session_id,
-        "sessions": list_session_summaries(app.root / "sessions"),
+        "sessions": list_session_summaries(app.root / "sessiontrees"),
     }
 
 
@@ -297,7 +297,7 @@ def _session_resource_payload(
     resource: str,
     node_id: str | None,
 ) -> Any:
-    records = load_session_records(session_id, state.root / "sessions")
+    records = load_session_records(session_id, state.root / "sessiontrees")
     if resource == "raw":
         return {"sessionId": session_id, "records": records}
     if resource == "runs":

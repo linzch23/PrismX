@@ -78,27 +78,25 @@ class RememberToolUpgradeTests(unittest.TestCase):
         from prismax.tools.state import RememberTool
         calls = []
         class MemStore:
-            def remember_note(self, note, category="events", title=None):
-                calls.append((note, category, title))
-                return f"mem://user/events/2026/05/24/slug"
-            def append_memory(self, note):
-                pass  # legacy
+            def remember(self, note, category="events", title=None, scope="tree", memory_type=None):
+                calls.append((note, category, title, scope, memory_type))
+                return "tree://default/memory/slug"
         tool = RememberTool(MemStore())
         result = tool.execute(note="Important fact")
         self.assertIn("Remembered", result)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], "Important fact")
+        self.assertEqual(calls[0][3], "tree")
 
     def test_remember_with_category_and_title(self):
         from prismax.tools.state import RememberTool
         calls = []
         class MemStore:
-            def remember_note(self, note, category="events", title=None):
-                calls.append((note, category, title))
-                return f"mem://user/preferences/2026/05/24/theme"
-            def append_memory(self, note):
-                pass
+            def remember(self, note, category="events", title=None, scope="tree", memory_type=None):
+                calls.append((note, category, title, scope, memory_type))
+                return "tree://default/memory/theme"
         tool = RememberTool(MemStore())
         result = tool.execute(note="Dark mode", category="preferences", title="Theme Preference")
         self.assertIn("Remembered", result)
-        self.assertEqual(calls[0], ("Dark mode", "preferences", "Theme Preference"))
+        self.assertEqual(calls[0], ("Dark mode", "preferences", "Theme Preference", "tree", None))
+

@@ -17,14 +17,7 @@ class MemoryStore:
     def __init__(self, memory_dir: Path, user_file: Path | None = None) -> None:
         self.memory_dir = memory_dir
         self.memory_dir.mkdir(parents=True, exist_ok=True)
-        self.history_path = self.memory_dir / "history.jsonl"
-        self.memory_path = self.memory_dir / "MEMORY.md"
-        self.compactions_path = self.memory_dir / "compactions.md"
         self.user_file = user_file or self.memory_dir / "USER.md"
-        if not self.memory_path.exists():
-            self.memory_path.write_text("# Long-term Memory\n\n", encoding="utf-8")
-        if not self.compactions_path.exists():
-            self.compactions_path.write_text("# Conversation Compactions\n\n", encoding="utf-8")
         if not self.user_file.exists():
             self.user_file.parent.mkdir(parents=True, exist_ok=True)
             self.user_file.write_text("# User Profile\n\n", encoding="utf-8")
@@ -42,28 +35,6 @@ class MemoryStore:
         """Set the LLM client for MemoryGraph auto_link. Called by AgentApp."""
         self._auto_link_client = client
         self._auto_link_model = model
-
-    def append_history(self, role: str, content: Any) -> None:
-        record = {
-            "ts": datetime.now(UTC8).isoformat(timespec="seconds"),
-            "role": role,
-            "content": content if isinstance(content, str) else repr(content),
-        }
-        with self.history_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-    def read_memory(self) -> str:
-        return self.memory_path.read_text(encoding="utf-8").strip()
-
-    def write_memory(self, content: str) -> None:
-        self.memory_path.write_text(content.strip() + "\n", encoding="utf-8")
-
-    def append_memory(self, note: str) -> None:
-        note = note.strip()
-        if not note:
-            return
-        with self.memory_path.open("a", encoding="utf-8") as handle:
-            handle.write(f"\n- {note}\n")
 
     def read_user(self) -> str:
         return self.user_file.read_text(encoding="utf-8").strip()
@@ -85,49 +56,6 @@ class MemoryStore:
         path = self.today_episode_path()
         existing = path.read_text(encoding="utf-8") if path.exists() else f"# {path.stem} Episode Memory\n"
         path.write_text(existing.rstrip() + "\n\n" + content + "\n", encoding="utf-8")
-
-    def append_compaction(
-        self,
-        *,
-        stamp: str,
-        summary: str,
-        old_count: int,
-        append_to_memory: bool = False,
-    ) -> None:
-        summary = summary.strip()
-        with self.compactions_path.open("a", encoding="utf-8") as handle:
-            handle.write(f"\n## {stamp} ({old_count} messages)\n\n{summary}\n")
-        if append_to_memory:
-            with self.memory_path.open("a", encoding="utf-8") as handle:
-                handle.write(f"\n## Compressed Context: {stamp}\n\n{summary}\n")
-
-    def append_compact_marker(self) -> None:
-        record = {"ts": datetime.now(UTC8).isoformat(timespec="seconds"), "type": "compact_event"}
-        with self.history_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-    def load_unarchived_history(self) -> list[dict[str, Any]]:
-        if not self.history_path.exists():
-            return []
-        rows = []
-        for line in self.history_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        last_marker = -1
-        for index, row in enumerate(rows):
-            if row.get("type") == "compact_event":
-                last_marker = index
-        return [
-            {"role": row["role"], "content": row["content"]}
-            for row in rows[last_marker + 1 :]
-            if "role" in row and "content" in row
-        ]
-
-    # ---- Memory OS new API ----
 
     def remember_note(self, note: str, category: str = "events", title: str | None = None) -> str:
         import re
@@ -199,7 +127,6 @@ class MemoryStore:
                                  f"bigram_overlap={best_overlap}")
         if self._auto_link_client:
             self._graph.auto_link(uri, self._cfs, self._auto_link_client, self._auto_link_model)
-        self.append_memory(f"[{category}] {note}")
         return uri
 
     def commit_session_archive(
@@ -215,7 +142,7 @@ class MemoryStore:
         archive_obj = ContextObject(
             uri=session_uri, context_type="session", title=f"Session Archive {slug}",
             abstract=summary[:200], overview=summary,
-            content_path=f"sessions/archives/{date_part}/{slug}.md",
+            content_path=f"sessiontrees/archives/{date_part}/{slug}.md",
             source="compaction", trust_score=0.7, sensitivity="internal",
             status="archived", tags=["session-archive"],
             metadata=metadata, digest="",
@@ -344,11 +271,6 @@ class MemoryStore:
                                  f"trust={item.get('trust_score', 0):.1f}")
         if not has_items:
             lines.append("\n(暂无结构化记忆，通过对话中的 remember 或 /compact 来创建)")
-        # legacy fallback
-        if self.memory_path.exists():
-            legacy = self.read_memory()
-            if legacy.strip() != "# Long-term Memory":
-                lines.append(f"\n---\n## Legacy（旧版 MEMORY.md 兼容保留）\n{legacy}")
         return "\n".join(lines)
 
 

@@ -21,7 +21,10 @@ class SearchContextTool(Tool):
         }, required=["query"])
 
     def execute(self, query: str, limit: int = 5) -> str:
-        results = self.memory_store.search_memory(query, limit=limit)
+        if hasattr(self.memory_store, "search"):
+            results = self.memory_store.search(query, limit=limit)
+        else:
+            results = self.memory_store.search_memory(query, limit=limit)
         if not results:
             return "(No results.)"
         lines = []
@@ -50,12 +53,14 @@ class ReadContextTool(Tool):
         }, required=["uri"])
 
     def execute(self, uri: str, layer: str = "auto") -> str:
+        if hasattr(self.memory_store, "read"):
+            return self.memory_store.read(uri, layer=layer)
         return self.memory_store.read_context(uri, layer=layer)
 
 
 class ListContextTool(Tool):
     name = "list_context"
-    description = "List context objects under a URI prefix."
+    description = "List context objects under a URI prefix. Use tree:// for Tree Memory and mem:// for long-term memory."
     read_only = True
 
     def __init__(self, memory_store: Any) -> None:
@@ -68,8 +73,11 @@ class ListContextTool(Tool):
             "limit": {"type": "integer"},
         }, required=[])
 
-    def execute(self, prefix: str = "mem://", limit: int = 50) -> str:
-        results = self.memory_store.list_context(prefix=prefix, limit=limit)
+    def execute(self, prefix: str = "tree://", limit: int = 50) -> str:
+        if hasattr(self.memory_store, "list"):
+            results = self.memory_store.list(prefix=prefix, limit=limit)
+        else:
+            results = self.memory_store.list_context(prefix=prefix, limit=limit)
         if not results:
             return "(No context objects found.)"
         lines = [f"{len(results)} objects under {prefix}:"]
@@ -94,7 +102,10 @@ class ShowContextLinksTool(Tool):
         }, required=["uri"])
 
     def execute(self, uri: str, limit: int = 5) -> str:
-        neighbors = self.memory_store.graph_neighbors(uri, limit=limit)
+        if hasattr(self.memory_store, "neighbors"):
+            neighbors = self.memory_store.neighbors(uri, limit=limit)
+        else:
+            neighbors = self.memory_store.graph_neighbors(uri, limit=limit)
         if not neighbors:
             return f"(No links for {uri}.)"
         lines = [f"Links for {uri}:"]

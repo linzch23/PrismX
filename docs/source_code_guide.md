@@ -4,7 +4,7 @@
 
 PrismaX 是一个本地运行的长期认知型 Agent 框架，核心目标是把智能体的运行上下文从“线性聊天历史”升级为“Tree-Guided Memory（TGM，树引导记忆）”。当前代码已经具备命令行 Agent、Web 工作台、工具调用、MCP 工具接入、TreeSession 会话树、Active Branch Context、Working Set、上下文压缩、结构化长期记忆、Wiki-style Knowledge Base、本地语义索引、运行时召回、一次性子代理和持久 TeamMate 等能力。
 
-需要注意：当前实现是一个可运行的工程版本，不是技术报告书中所有概念的完全体。很多 TGM 能力已经有骨架和主链路，例如 `sessions/*.jsonl`、`CompactionEntry`、`ContextFS`、`MemoryGraph`、`WikiKnowledgeBase`、`WorkingSetBuilder`；但部分能力仍是轻量实现，例如 Branch-safe Recall 还主要是排序策略，不是完整策略引擎。
+需要注意：当前实现是一个可运行的工程版本，不是技术报告书中所有概念的完全体。很多 TGM 能力已经有骨架和主链路，例如 `sessiontrees/*.jsonl`、`CompactionEntry`、`ContextFS`、`MemoryGraph`、`WikiKnowledgeBase`、`WorkingSetBuilder`；但部分能力仍是轻量实现，例如 Branch-safe Recall 还主要是排序策略，不是完整策略引擎。
 
 ## 2. 项目目录总览
 
@@ -14,7 +14,7 @@ project-root/
 │   └── prismax/              # PrismaX 主源码包
 ├── tests/                    # 单元测试与集成测试
 ├── memory/                   # 运行时长期记忆、上下文对象、Wiki 知识库和 token 日志
-├── sessions/                 # 运行时 TreeSession JSONL 会话树，首次运行后生成
+├── sessiontrees/                 # 运行时 TreeSession JSONL 会话树，首次运行后生成
 ├── docs/                     # 项目文档、源码说明、历史设计文档
 ├── frontend/                 # 本地 Web 工作台静态前端
 ├── templates/                # 主 Agent 和子 Agent prompt 模板
@@ -82,7 +82,7 @@ Web 工作台复用 `AgentApp` 应用层，通过 HTTP/SSE 暴露聊天流、会
 5. `SkillsLoader` 加载 `skills/`。
 6. `MessageBus` 和 `TeammateManager` 初始化多智能体通信。
 7. `MCPClientManager` 读取 `mcp_servers.json` 并启动 MCP。
-8. `TreeSessionManager` 初始化 `sessions/*.jsonl`。
+8. `TreeSessionManager` 初始化 `sessiontrees/*.jsonl`。
 9. `_build_registry()` 注册内置工具、MCP 工具、Team 工具、Context 工具和 `dispatch_subagent`。
 10. `SessionMemoryCommitter` 连接 compaction 和长期记忆。
 11. `RuntimeContextBuilder` 与 `WorkingSetBuilder` 准备每轮上下文构建。
@@ -109,7 +109,7 @@ Web 工作台复用 `AgentApp` 应用层，通过 HTTP/SSE 暴露聊天流、会
 ```text
 用户输入
 → tree.append_message()
-→ memory.append_history()
+→ TreeSession append-only event log
 → tree.debugBuildModelContext()
 → runtime_context_builder.build()
 → working_set_builder.build()
@@ -236,7 +236,7 @@ activeLeafId
 
 | 函数 | 作用 |
 |---|---|
-| `append_line()` | 追加写入 `sessions/{session_id}.jsonl`。 |
+| `append_line()` | 追加写入 `sessiontrees/{session_id}.jsonl`。 |
 | `read_lines()` | 读取 JSONL 所有行。 |
 | `listSessions()` | 列出 session 文件。 |
 
@@ -248,7 +248,7 @@ PrismaX 当前不是直接把全量历史拼给模型，而是使用 active bran
 
 | 概念 | 当前代码对应 |
 |---|---|
-| 原始历史 | `sessions/*.jsonl`，由 `TreeSessionManager` append-only 保存。 |
+| 原始历史 | `sessiontrees/*.jsonl`，由 `TreeSessionManager` append-only 保存。 |
 | Active Branch Context | `TreeSessionManager.getActiveBranch()`、`buildModelContext()`。 |
 | Working Context | `WorkingSet`，定义在 `src/prismax/working_set.py`。 |
 | Runtime Recall 注入内容 | `RuntimeContextBuilder.build()`，定义在 `src/prismax/context.py`。 |
@@ -291,7 +291,7 @@ runtime_recall
 recall_results
 ```
 
-当前实现没有全量 history 拼接问题：模型 messages 由 `tree.buildModelContext()` 基于 active branch 构造。但 legacy `memory/history.jsonl` 仍会记录用户输入和最终 assistant 输出，主要用于兼容和旧压缩逻辑，不是模型上下文事实源。
+当前实现没有全量 history 拼接问题：模型 messages 由 `tree.buildModelContext()` 基于 active branch 构造。但 旧 `memory/history.jsonl` 已移除；TreeSession 是唯一原始对话事实源。
 
 ## 8. memory 文件夹详细说明
 
@@ -299,11 +299,9 @@ recall_results
 
 ```text
 memory/
-├── MEMORY.md
-├── compactions.md
-├── history.jsonl
 ├── semantic_index.jsonl
 ├── tokens.jsonl
+├── tree/
 ├── context/
 │   ├── diffs.jsonl
 │   ├── index.jsonl
@@ -316,38 +314,11 @@ memory/
     └── User/
 ```
 
-`memory/` 由 `src/prismax/memory.py::MemoryStore` 初始化。它不是 TreeSession 的唯一事实源；原始任务经历的主事实源是 `sessions/*.jsonl`。`memory/` 主要负责长期记忆、结构化知识、关系索引、召回索引和兼容日志。
+`memory/` 由 `src/prismax/memory.py::MemoryStore`、`TreeMemoryStore` 和长期知识索引初始化。它不是 TreeSession 的唯一事实源；原始任务经历的主事实源是 `sessiontrees/*.jsonl`。`memory/` 主要负责 Tree Memory、长期知识、关系索引和召回索引。
 
-### 8.1 `memory/history.jsonl`
+旧线性文件 `memory/history.jsonl`、`memory/MEMORY.md`、`memory/compactions.md` 已删除。
 
-#### 作用
-
-保存 legacy 线性历史记录。`MemoryStore.append_history()` 在 `AgentApp.ask()` 中记录用户输入和最终 assistant 回复。
-
-#### 核心文件
-
-| 文件 | 作用 | 关键类/函数 |
-|---|---|---|
-| `memory/history.jsonl` | 线性历史兼容日志 | `MemoryStore.append_history()`、`load_unarchived_history()` |
-
-#### 数据输入
-
-来自 `AgentApp.ask()`：
-
-```text
-用户输入 → memory.append_history("user", user_input)
-最终回复 → memory.append_history("assistant", reply)
-```
-
-#### 数据输出
-
-输出 JSONL 行，每行包含 `ts`、`role`、`content`。旧版 `HistoryCompactor` 可读取未归档历史。
-
-#### 与 TGM 的关系
-
-它不是 Experience Layer 的主事实源，只是 legacy compatibility。TGM 的原始经历应以 `sessions/*.jsonl` 为准。
-
-### 8.2 `memory/tokens.jsonl`
+### 8.1 `memory/tokens.jsonl`
 
 #### 作用
 
@@ -371,53 +342,19 @@ memory/
 
 辅助 Compaction 触发，不属于长期知识层。
 
-### 8.3 `memory/MEMORY.md`
+### 8.2 `memory/tree/`
 
 #### 作用
 
-旧版长期记忆 Markdown 文件。当前仍由 `append_memory()` 和 `remember_note()` 追加，用于兼容。
-
-#### 核心文件
-
-| 文件 | 作用 | 关键类/函数 |
-|---|---|---|
-| `memory/MEMORY.md` | legacy 长期记忆 | `read_memory()`、`write_memory()`、`append_memory()` |
-
-#### 数据输入
-
-来自 `RememberTool.execute()` 或 `MemoryStore.remember_note()`。
-
-#### 数据输出
-
-生成普通 Markdown 条目。
+保存当前 TreeSession 内可横向共享的短期经验，URI 形如 `tree://{tree_id}/memory/{item_id}`。
 
 #### 与 TGM 的关系
 
-属于旧版长期记忆兼容层，不是新的 Semantic Knowledge 主存储。
-
-### 8.4 `memory/compactions.md`
-
-#### 作用
-
-保存旧版线性历史压缩摘要。
-
-#### 核心文件
-
-| 文件 | 作用 | 关键类/函数 |
-|---|---|---|
-| `memory/compactions.md` | legacy 压缩摘要 | `MemoryStore.append_compaction()`、`HistoryCompactor` |
-
-#### 数据输入
-
-来自 `src/prismax/compactor.py::HistoryCompactor`。
-
-#### 数据输出
-
-写入 Markdown 格式的压缩摘要。
+它对应 Tree Memory 层，解决同一棵会话树内 sibling branch 的经验共享问题。
 
 #### 与 TGM 的关系
 
-与 TGM 的 `CompactionEntry` 不同。TGM 当前主压缩记录在 `sessions/*.jsonl` 的 `compaction` 条目中。
+与 TGM 的 `CompactionEntry` 不同。TGM 当前主压缩记录在 `sessiontrees/*.jsonl` 的 `compaction` 条目中。
 
 ### 8.5 `memory/context/`
 
@@ -520,7 +457,7 @@ knowledge_type
 ```text
 /compact
 → TreeSessionManager.compactActiveBranch()
-→ CompactionEntry 写入 sessions/*.jsonl
+→ CompactionEntry 写入 sessiontrees/*.jsonl
 → SessionMemoryCommitter.commit_compaction()
 → MemoryStore.commit_session_archive()
 → ContextFS 写 session archive 和 memory object
@@ -532,7 +469,7 @@ knowledge_type
 
 ## 9. Experience Replay Event Log 源码说明
 
-当前 Event Log 的主实现是 `sessions/*.jsonl`，不是独立事件数据库。每一行都是 append-only JSON。
+当前 Event Log 的主实现是 `sessiontrees/*.jsonl`，不是独立事件数据库。每一行都是 append-only JSON。
 
 ### 事件结构
 
@@ -605,7 +542,7 @@ src/prismax/cli.py
 
 - 用户显式执行 `/compact`。
 - `AgentApp.ask()` 末尾会根据 `TokenLog.should_compact()` 尝试自动压缩。
-- `HistoryCompactor` 仍存在，但它主要面向 legacy 线性 history，不是 TGM 主路径。
+- 旧 `HistoryCompactor` 已删除；TGM 只使用 TreeSession compaction。
 
 ### 输入上下文来源
 
@@ -622,7 +559,7 @@ src/prismax/cli.py
 
 ### CompactionEntry 存储位置
 
-`CompactionEntry` 追加写入 `sessions/{session_id}.jsonl`，字段包括：
+`CompactionEntry` 追加写入 `sessiontrees/{session_id}.jsonl`，字段包括：
 
 ```text
 summary
@@ -921,13 +858,13 @@ User Input
 → Tool Result
 → TreeSessionManager.append_tool_call() / append_tool_result()
 → 下一轮 LLM 或最终 Response
-→ MemoryStore.append_history()
+→ TreeSessionManager.append_message()
 ```
 
 ### TGM 记忆演化数据流
 
 ```text
-TreeSession / Event Log (sessions/*.jsonl)
+TreeSession / Event Log (sessiontrees/*.jsonl)
 → Active Branch Context
 → Working Set
 → Compaction
@@ -951,7 +888,7 @@ TreeSession / Event Log (sessions/*.jsonl)
 | TreeSession | `TreeSessionManager` 支持 parentId、active leaf、jump/fork/clone/label、JSONL replay。 | 已完成 | 后续可优化 ID 可读性和树调试界面。 |
 | Active Branch Context | `buildModelContext()` 只基于 active branch 构造上下文。 | 已完成 | 可增加更细粒度的上下文预算控制。 |
 | Working Set | `WorkingSetBuilder` 汇总 active branch、todo、最近工具结果、episode、runtime recall。 | 部分完成 | 当前 Working Set 主要注入 system prompt，尚未形成更强 schema/预算策略。 |
-| Event Log | `sessions/*.jsonl` append-only，metadata 有事件语义。 | 部分完成 | 还不是独立事件总线；todo、team 状态等不能完整从事件恢复。 |
+| Event Log | `sessiontrees/*.jsonl` append-only，metadata 有事件语义。 | 部分完成 | 还不是独立事件总线；todo、team 状态等不能完整从事件恢复。 |
 | Experience Replay | `loadSession()` 可 replay TreeSession 和 active leaf。 | 部分完成 | 可扩展为完整 Runtime State replay。 |
 | Compaction | `/compact` 生成 `CompactionEntry`，支持 LLM 摘要和保留最近上下文。 | 已完成主体 | 自动阶段触发和摘要质量校验仍可增强。 |
 | Episode Memory | `CompactionEntry`、`BranchSummaryEntry` 对应阶段记忆。 | 部分完成 | Episode 没有单独统一存储模型，主要在 TreeSession 内。 |
@@ -985,6 +922,8 @@ TreeSession / Event Log (sessions/*.jsonl)
 
 当前 PrismaX 代码已经形成一个可运行的 TGM Agent Runtime：`AgentApp` 负责装配，`AgentRunner` 负责模型和工具循环，`TreeSessionManager` 负责树状任务经历和 active branch，上下文由 `WorkingSetBuilder` 和 `RuntimeContextBuilder` 动态构建，长期知识通过 `MemoryStore`、`ContextFS`、`WikiKnowledgeBase`、`LocalSemanticVectorIndex` 和 `MemoryGraph` 沉淀与召回。
 
-核心亮点是：会话事实源不再是线性聊天数组，而是 `sessions/*.jsonl` 会话树；模型上下文基于 active branch 构建；压缩结果可以进入长期记忆与 Wiki 知识库；工具结果和多智能体协作也被纳入统一运行链路。
+核心亮点是：会话事实源不再是线性聊天数组，而是 `sessiontrees/*.jsonl` 会话树；模型上下文基于 active branch 构建；压缩结果可以进入长期记忆与 Wiki 知识库；工具结果和多智能体协作也被纳入统一运行链路。
 
 后续改造重点包括：把 Event Log 从“JSONL 条目 + metadata 语义”进一步升级为完整可 replay 的 Runtime Event System；强化 Working Set 预算和 schema；完善 Branch-safe Recall 策略；让 Wiki 知识库具备更强的更新、冲突治理和可视化能力；扩展 MCP resources/prompts 映射。
+
+

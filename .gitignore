@@ -7,7 +7,7 @@ __pycache__/
 .mypy_cache/
 memory/
 .team/
-sessions/
+sessiontrees/
 dist/
 build/
 .playwright-mcp

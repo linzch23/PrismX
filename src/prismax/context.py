@@ -22,7 +22,6 @@ class ContextBuilder:
             "workspace": str(workspace),
             "active_skills": active_skills,
             "skills_summary": self.skills_loader.summary(exclude=always_names),
-            "memory": self.memory_store.read_memory(),
             "user_profile": self.memory_store.read_user(),
             "runtime_context": runtime_context,
         }

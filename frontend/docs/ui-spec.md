@@ -69,10 +69,11 @@ These panels are intentionally off-canvas because they are diagnostic surfaces.
 
 ## API Integration Boundary
 
-The server maps `sessions/*.jsonl` into this UI shape without making the browser parse JSONL directly:
+The server maps `sessiontrees/*.jsonl` into this UI shape without making the browser parse JSONL directly:
 
 - JSONL message/tool entries become `RunStep` objects.
 - `tool_call` and `tool_result` attach to the relevant step.
 - file write/edit tool calls populate Changes and Tools.
 - node detail API populates the Raw JSON inspector.
 - Tree Drawer keeps node fields stable: `id`, `parentId`, `type`, `label`, `preview`, `status`.
+
