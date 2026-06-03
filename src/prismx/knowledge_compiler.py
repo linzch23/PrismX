@@ -67,6 +67,7 @@ def _content(item: TreeMemoryItem) -> str:
             "",
             "## Tree Memory Source",
             f"- tree_id: {item.tree_id}",
+            f"- source_session_id: {item.source_session_id or '(unknown)'}",
             f"- source_branch: {item.source_branch or '(unknown)'}",
             f"- source_entry_id: {item.source_entry_id or '(unknown)'}",
             f"- reuse_count: {item.reuse_count}",

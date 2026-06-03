@@ -20,7 +20,6 @@ from .tree_session import (
     ToolResultEntry,
 )
 from .web_adapter import (
-    list_session_summaries,
     load_session_records,
     memory_payload,
     records_to_file_changes,
@@ -42,6 +41,9 @@ class WebState:
         self.frontend_dir = root / "frontend"
         self.app = AgentApp(root=root)
         self.workspace = WorkspaceStore(root, self.app.tree)
+        payload = self.workspace.payload()
+        if payload.get("activeTreeId"):
+            self.app.active_tree_id = str(payload["activeTreeId"])
         self.lock = threading.RLock()
 
     def close(self) -> None:
@@ -49,6 +51,9 @@ class WebState:
 
     def select_session(self, session_id: str) -> None:
         self.workspace.select_backend_session(session_id)
+        payload = self.workspace.payload()
+        if payload.get("activeTreeId"):
+            self.app.active_tree_id = str(payload["activeTreeId"])
         self.app.session_id = session_id
         self.app.history = self.app.tree.buildModelContext(session_id)
 
@@ -121,7 +126,7 @@ def _handler_factory(state: WebState):
                     return
                 if path == "/api/memory":
                     with state.lock:
-                        self._send_json(memory_payload(state.root / "memory"))
+                        self._send_json(memory_payload(state.app.memory.memory_dir))
                     return
                 if path == "/api/mcp":
                     with state.lock:
@@ -376,7 +381,7 @@ def _entry_id(payload: dict[str, Any]) -> str:
 def _sessions_payload(app: AgentApp) -> dict[str, Any]:
     return {
         "activeSessionId": app.session_id,
-        "sessions": list_session_summaries(app.root / "sessiontrees"),
+        "sessions": _session_summaries_from_tree(app),
     }
 
 
@@ -389,7 +394,7 @@ def _workspace_payload(state: WebState) -> dict[str, Any]:
         if not session_id:
             continue
         try:
-            records = load_session_records(session_id, state.root / "sessiontrees")
+            records = _load_state_session_records(state, session_id)
         except FileNotFoundError:
             records = []
         session_records[session_id] = len(records)
@@ -398,11 +403,15 @@ def _workspace_payload(state: WebState) -> dict[str, Any]:
             for step in records_to_run_steps(records)
             if step.get("kind") in {"user", "assistant"}
         ]
-    memory = memory_payload(state.root / "memory")
     workspace["sessionMessages"] = session_messages
     workspace["sessionRecordCounts"] = session_records
-    workspace["treeMemoryItems"] = _tree_memory_items(memory.get("objects", []))
-    workspace["longTermKnowledgeItems"] = _knowledge_items(memory.get("objects", []))
+    active_tree_id = str(workspace.get("activeTreeId") or "")
+    workspace["treeMemoryItems"] = _tree_memory_items(
+        state.app.tree_memory.list(active_tree_id) if active_tree_id else []
+    )
+    workspace["longTermKnowledgeItems"] = _knowledge_items(
+        state.app.memory.list_context(prefix="mem://", limit=200)
+    )
     return workspace
 
 
@@ -434,7 +443,7 @@ def _workspace_context_for_session(state: WebState, session_id: str) -> str | No
 
 def _session_context_messages(state: WebState, session_id: str) -> list[dict[str, Any]]:
     try:
-        records = load_session_records(session_id, state.root / "sessiontrees")
+        records = _load_state_session_records(state, session_id)
     except FileNotFoundError:
         return []
     return [
@@ -489,7 +498,7 @@ def _session_resource_payload(
     resource: str,
     node_id: str | None,
 ) -> Any:
-    records = load_session_records(session_id, state.root / "sessiontrees")
+    records = _load_state_session_records(state, session_id)
     if resource == "raw":
         return {"sessionId": session_id, "records": records}
     if resource == "runs":
@@ -621,6 +630,36 @@ def _plain_data(value: Any) -> Any:
     return str(value)
 
 
+def _load_state_session_records(state: WebState, session_id: str) -> list[dict[str, Any]]:
+    tree = state.app.tree if hasattr(state, "app") else getattr(state, "tree", state.workspace.tree)
+    path = tree.getSessionFilePath(session_id)
+    if not path.exists():
+        raise FileNotFoundError(f"session not found: {session_id}")
+    return load_session_records(session_id, path.parent)
+
+
+def _session_summaries_from_tree(app: AgentApp) -> list[dict[str, Any]]:
+    summaries = []
+    for session_id in app.tree.listSessions():
+        try:
+            path = app.tree.getSessionFilePath(session_id)
+            records = load_session_records(session_id, path.parent)
+        except FileNotFoundError:
+            continue
+        info = next((record for record in records if record.get("type") == "session_info"), {})
+        summaries.append(
+            {
+                "id": session_id,
+                "filePath": str(path),
+                "title": info.get("title"),
+                "recordCount": len(records),
+                "createdAt": info.get("createdAt") or (records[0].get("timestamp") if records else None),
+                "updatedAt": next((str(record["timestamp"]) for record in reversed(records) if record.get("timestamp")), None),
+            }
+        )
+    return sorted(summaries, key=lambda item: (str(item.get("updatedAt") or ""), str(item.get("id") or "")))
+
+
 def _tree_memory_items(objects: list[Any]) -> list[dict[str, Any]]:
     items = []
     for item in objects:
@@ -628,13 +667,20 @@ def _tree_memory_items(objects: list[Any]) -> list[dict[str, Any]]:
             continue
         uri = str(item.get("uri") or "")
         context_type = str(item.get("context_type") or item.get("type") or "")
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         if uri.startswith("tree://") or "tree" in context_type:
             items.append(
                 {
                     "id": uri or str(item.get("id") or ""),
-                    "treeId": str(item.get("tree_id") or item.get("treeId") or ""),
-                    "sourceSessionId": str(item.get("source_session_id") or item.get("sourceSessionId") or ""),
-                    "type": str(item.get("memory_type") or item.get("type") or context_type or "finding"),
+                    "treeId": str(item.get("tree_id") or item.get("treeId") or metadata.get("tree_id") or ""),
+                    "sourceSessionId": str(
+                        item.get("source_session_id")
+                        or item.get("sourceSessionId")
+                        or metadata.get("source_session_id")
+                        or metadata.get("source_branch")
+                        or ""
+                    ),
+                    "type": str(item.get("memory_type") or metadata.get("memory_type") or item.get("type") or context_type or "finding"),
                     "content": str(item.get("overview") or item.get("content") or item.get("title") or uri),
                     "createdAt": str(item.get("created_at") or item.get("createdAt") or ""),
                 }

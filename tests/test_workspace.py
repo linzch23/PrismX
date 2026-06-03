@@ -14,6 +14,7 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.tree = TreeSessionManager(
             session_dir=self.root / "sessiontrees",
+            data_root=self.root / "data",
             summarizer=FakeSummarizer(),
         )
         self.store = WorkspaceStore(self.root, self.tree)
@@ -46,6 +47,10 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.assertIn(child_id, root["children"])
         self.assertEqual(child["parentId"], root_id)
         self.assertIn(child_id, self.tree.listSessions())
+        self.assertTrue((self.root / "data" / "workspace.json").exists())
+        self.assertTrue((self.root / "data" / "sessions" / tree_id / "tree.json").exists())
+        self.assertTrue((self.root / "data" / "sessions" / tree_id / "sessions" / f"{root_id}.jsonl").exists())
+        self.assertTrue((self.root / "data" / "sessions" / tree_id / "sessions" / f"{child_id}.jsonl").exists())
 
     def test_active_path_returns_root_to_current_session(self) -> None:
         payload = self.store.payload()

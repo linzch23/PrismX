@@ -15,6 +15,11 @@ UTC8 = timezone(timedelta(hours=8))
 
 class MemoryStore:
     def __init__(self, memory_dir: Path, user_file: Path | None = None) -> None:
+        memory_dir = Path(memory_dir)
+        if memory_dir.name == "memory":
+            # Deprecated constructor shape: callers used to pass root/memory.
+            # New long-term knowledge writes go to root/data/knowledge.
+            memory_dir = memory_dir.parent / "data" / "knowledge"
         self.memory_dir = memory_dir
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.user_file = user_file or self.memory_dir / "USER.md"

@@ -23,6 +23,7 @@ from .tree_session import LlmSummarizer, TreeSessionManager
 from .tree_memory import TreeMemoryStore
 from .knowledge_compiler import KnowledgeCompiler
 from .runtime_recall import TgmContextGateway, TgmRuntimeRecallBuilder
+from .runtime_paths import RuntimePaths
 from .working_set import WorkingSetBuilder, WorkingSet
 from .tools import (
     EditFileTool,
@@ -52,6 +53,7 @@ class AgentApp:
     def __init__(self, root: Path | None = None) -> None:
         load_dotenv()
         self.root = root or Path.cwd()
+        self.paths = RuntimePaths(self.root)
         self.workspace = Path(os.getenv("MY_AGENT_WORKSPACE", str(self.root))).resolve()
         self.provider = os.getenv("MY_AGENT_PROVIDER", "deepseek")
         default_model = "deepseek-chat" if self.provider == "deepseek" else "claude-3-5-sonnet-latest"
@@ -62,7 +64,7 @@ class AgentApp:
         self.compact_keep_messages = int(os.getenv("MY_AGENT_COMPACT_KEEP_MESSAGES", "8"))
 
         self.client = build_model_client(self.provider)
-        self.memory = MemoryStore(self.root / "memory", user_file=self.root / "templates" / "USER.md")
+        self.memory = MemoryStore(self.paths.knowledge, user_file=self.root / "templates" / "USER.md")
         self.tokens = TokenLog(self.root / "memory" / "tokens.jsonl")
         self.skills = SkillsLoader(self.root / "skills")
         self.todos = TodoStore()
@@ -70,6 +72,7 @@ class AgentApp:
         self.mcp = MCPClientManager(self.root / "mcp_servers.json")
         self.tree = TreeSessionManager(
             session_dir=self.root / "sessiontrees",
+            data_root=self.paths.data,
             cwd=str(self.workspace),
             summarizer=LlmSummarizer(self.client, self.model),
             compact_keep_messages=self.compact_keep_messages,
@@ -85,11 +88,13 @@ class AgentApp:
         else:
             self.session_id = self.tree.createSession("default", cwd=str(self.workspace))
         self.tree.resumeSession(self.session_id)
-        self.tree_memory = TreeMemoryStore(self.root / "memory" / "tree")
+        self.active_tree_id = self.session_id
+        self.tree_memory = TreeMemoryStore(self.paths.tree_memory, legacy_root=self.paths.legacy_memory / "tree")
         self.context_gateway = TgmContextGateway(
             memory_store=self.memory,
             tree_memory=self.tree_memory,
-            tree_id_provider=lambda: self.session_id,
+            tree_id_provider=lambda: self.active_tree_id,
+            active_session_provider=lambda: self.session_id,
             active_branch_provider=lambda: self.tree._session(self.session_id).activeLeafId,
         )
 
@@ -104,6 +109,7 @@ class AgentApp:
             extractor=LlmMemoryExtractor(self.client, self.model),
             tree_memory=self.tree_memory,
             knowledge_compiler=KnowledgeCompiler(),
+            tree_id_provider=lambda: self.active_tree_id,
         )
 
         context = ContextBuilder(self.root / "templates", self.skills, self.memory)

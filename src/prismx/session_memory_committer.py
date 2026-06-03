@@ -47,12 +47,14 @@ class SessionMemoryCommitter:
         extractor: MemoryExtractor,
         tree_memory: Any | None = None,
         knowledge_compiler: Any | None = None,
+        tree_id_provider: Any | None = None,
     ) -> None:
         self.tree = tree
         self.memory_store = memory_store
         self.extractor = extractor
         self.tree_memory = tree_memory
         self.knowledge_compiler = knowledge_compiler
+        self.tree_id_provider = tree_id_provider
 
     def commit_compaction(self, session_id: str, compaction_id: str) -> str:
         # Read compaction entry
@@ -104,8 +106,11 @@ class SessionMemoryCommitter:
             metadata["extraction_error"] = error
 
         # Promote stable Tree Memory into long-term knowledge.
+        tree_id = str(self.tree_id_provider()) if self.tree_id_provider is not None else session_id
+        promoted_item_ids: list[str] = []
         if self.tree_memory is not None and self.knowledge_compiler is not None:
-            tree_candidates = self.tree_memory.promotion_candidates(session_id)
+            tree_candidates = self.tree_memory.promotion_candidates(tree_id)
+            promoted_item_ids = [item.id for item in tree_candidates]
             operations.extend(
                 self.knowledge_compiler.compile_tree_memory(
                     tree_candidates,
@@ -120,6 +125,11 @@ class SessionMemoryCommitter:
             operations=operations,
             metadata=metadata,
         )
+        for item_id in promoted_item_ids:
+            try:
+                self.tree_memory.mark_promoted(tree_id, item_id)
+            except Exception:
+                pass
         knowledge_uris = list(getattr(self.memory_store, "last_committed_knowledge_uris", []))
         if hasattr(self.tree, "appendKnowledgeCommit"):
             try:

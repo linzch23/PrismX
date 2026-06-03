@@ -23,11 +23,13 @@ class TgmContextGateway:
         memory_store: Any,
         tree_memory: Any,
         tree_id_provider,
+        active_session_provider=None,
         active_branch_provider=None,
     ) -> None:
         self.memory_store = memory_store
         self.tree_memory = tree_memory
         self.tree_id_provider = tree_id_provider
+        self.active_session_provider = active_session_provider
         self.active_branch_provider = active_branch_provider
 
     @property
@@ -39,6 +41,12 @@ class TgmContextGateway:
         if self.active_branch_provider is None:
             return ""
         return str(self.active_branch_provider() or "")
+
+    @property
+    def active_session_id(self) -> str:
+        if self.active_session_provider is None:
+            return ""
+        return str(self.active_session_provider() or "")
 
     def remember(
         self,
@@ -57,6 +65,7 @@ class TgmContextGateway:
             title=title,
             memory_type=memory_type or _category_to_tree_type(category),
             tags=[category],
+            source_session_id=self.active_session_id,
             source_branch=self.active_branch_id,
         )
 

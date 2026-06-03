@@ -103,8 +103,9 @@ class PrismXKnowledgeTests(unittest.TestCase):
             },
         )
         self.assertEqual(uri, "ctx://sessiontrees/archives/2026/05/30/s1-c1")
-        wiki_path = tmp / "memory" / "Wiki" / "Project" / "tgm-runtime.md"
+        wiki_path = tmp / "data" / "knowledge" / "wiki" / "Project" / "tgm-runtime.md"
         self.assertTrue(wiki_path.exists())
+        self.assertTrue((tmp / "data" / "knowledge" / "semantic_index.jsonl").exists())
         wiki_text = wiki_path.read_text(encoding="utf-8")
         self.assertIn('"source_session": "s1"', wiki_text)
         self.assertIn('"source_branch": "leaf-b"', wiki_text)
@@ -165,4 +166,3 @@ class PrismXBranchSafeRecallTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

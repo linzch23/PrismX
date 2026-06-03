@@ -521,15 +521,32 @@ class SimpleTokenEstimator:
 
 
 class JsonlSessionStorage:
-    def __init__(self, session_dir: Path) -> None:
+    def __init__(self, session_dir: Path, *, data_root: Path | None = None) -> None:
         self.session_dir = Path(session_dir)
+        self.data_root = Path(data_root) if data_root is not None else None
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        if self.data_root is not None:
+            (self.data_root / "sessions").mkdir(parents=True, exist_ok=True)
+        self._session_tree_ids: dict[str, str] = {}
+
+    def bindSessionTree(self, session_id: str, tree_id: str) -> None:
+        self._session_tree_ids[session_id] = tree_id
 
     def getSessionFilePath(self, session_id: str) -> Path:
+        tree_id = self._session_tree_ids.get(session_id)
+        if tree_id and self.data_root is not None:
+            return self._data_session_path(tree_id, session_id)
+        if self.data_root is not None:
+            matches = sorted((self.data_root / "sessions").glob(f"*/sessions/{session_id}.jsonl"))
+            if matches:
+                return matches[0]
         return self.session_dir / f"{session_id}.jsonl"
 
     def listSessions(self) -> list[str]:
-        return sorted(path.stem for path in self.session_dir.glob("*.jsonl"))
+        ids = {path.stem for path in self.session_dir.glob("*.jsonl")}
+        if self.data_root is not None:
+            ids.update(path.stem for path in (self.data_root / "sessions").glob("*/sessions/*.jsonl"))
+        return sorted(ids)
 
     def append_line(self, session_id: str, entry: SessionEntry) -> None:
         path = self.getSessionFilePath(session_id)
@@ -552,6 +569,16 @@ class JsonlSessionStorage:
 
     def deleteSession(self, session_id: str) -> None:
         self.getSessionFilePath(session_id).unlink(missing_ok=True)
+        self._session_tree_ids.pop(session_id, None)
+
+    def _data_session_path(self, tree_id: str, session_id: str) -> Path:
+        safe_tree_id = _safe_storage_id(tree_id)
+        safe_session_id = _safe_storage_id(session_id)
+        return self.data_root / "sessions" / safe_tree_id / "sessions" / f"{safe_session_id}.jsonl"
+
+
+def _safe_storage_id(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in str(value))
 
 
 def _now() -> str:
@@ -768,12 +795,13 @@ class TreeSessionManager:
         self,
         *,
         session_dir: Path | None = None,
+        data_root: Path | None = None,
         cwd: str = "",
         summarizer: SummarizerProtocol | Callable[..., str] | None = None,
         token_estimator: TokenEstimator | None = None,
         compact_keep_messages: int = 4,
     ) -> None:
-        self.storage = JsonlSessionStorage(session_dir or Path(".sessions"))
+        self.storage = JsonlSessionStorage(session_dir or Path(".sessions"), data_root=data_root)
         self.sessions: dict[str, TreeSession] = {}
         self.compact_keep_messages = compact_keep_messages
         self.summarizer = self._coerce_summarizer(summarizer)
@@ -784,8 +812,17 @@ class TreeSessionManager:
             first = self.storage.listSessions()[0]
             self.loadSession(first)
 
-    def createSession(self, session_id: str | None = None, *, cwd: str = "", title: str | None = None) -> str:
+    def createSession(
+        self,
+        session_id: str | None = None,
+        *,
+        cwd: str = "",
+        title: str | None = None,
+        tree_id: str | None = None,
+    ) -> str:
         session_id = session_id or uuid4().hex
+        if tree_id:
+            self.storage.bindSessionTree(session_id, tree_id)
         if self.storage.getSessionFilePath(session_id).exists():
             raise FileExistsError(self.storage.getSessionFilePath(session_id))
         now = _now()

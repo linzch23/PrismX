@@ -41,7 +41,7 @@ class KnowledgeObject:
 
 class WikiKnowledgeBase:
     def __init__(self, memory_dir: Path) -> None:
-        self.root = Path(memory_dir) / "Wiki"
+        self.root = Path(memory_dir) / "wiki"
         for bucket in {"Project", "Architecture", "User", "Pattern", "Research"}:
             (self.root / bucket).mkdir(parents=True, exist_ok=True)
 

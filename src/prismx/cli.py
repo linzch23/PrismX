@@ -184,7 +184,12 @@ def handle_command(app: AgentApp, workspace: WorkspaceStore, command: str) -> bo
         if not tree_id:
             print("No active SessionTree.\n")
             return True
-        uri = app.tree_memory.remember(str(tree_id), content, memory_type=memory_type)
+        uri = app.tree_memory.remember(
+            str(tree_id),
+            content,
+            memory_type=memory_type,
+            source_session_id=str(payload.get("activeSessionId") or app.session_id),
+        )
         print(f"Tree Memory added: {uri}\n")
         return True
     if command.startswith("/memory delete "):
@@ -215,6 +220,9 @@ def handle_command(app: AgentApp, workspace: WorkspaceStore, command: str) -> bo
 
 def _select_session(app: AgentApp, workspace: WorkspaceStore, session_id: str) -> None:
     workspace.select_backend_session(session_id)
+    payload = workspace.payload()
+    if payload.get("activeTreeId"):
+        app.active_tree_id = str(payload["activeTreeId"])
     app.session_id = session_id
     app.history = app.tree.buildModelContext(session_id)
 

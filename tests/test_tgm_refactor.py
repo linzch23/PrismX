@@ -29,6 +29,8 @@ class TreeMemoryTests(unittest.TestCase):
             source_branch=prim,
             confidence=0.9,
         )
+        self.assertTrue((tmp / "data" / "tree_memory" / f"{sid}.jsonl").exists())
+        self.assertFalse((tmp / "memory" / "tree" / f"{sid}.jsonl").exists())
 
         tree.jumpToEntry(sid, root)
         kruskal = tree.append_message(sid, {"role": "user", "content": "Kruskal 算法"})
@@ -64,6 +66,8 @@ class TgmContextGatewayTests(unittest.TestCase):
 
         self.assertTrue(tree_uri.startswith("tree://s1/memory/"))
         self.assertTrue(long_uri.startswith("mem://user/preferences/"))
+        self.assertTrue((tmp / "data" / "tree_memory" / "s1.jsonl").exists())
+        self.assertTrue((tmp / "data" / "knowledge" / "context" / "index.jsonl").exists())
         self.assertIn("简洁实现", gateway.read(tree_uri))
         self.assertIn("摘要", gateway.read(long_uri))
 
@@ -124,7 +128,27 @@ class KnowledgeCompilerTests(unittest.TestCase):
         self.assertIn("tree-memory", operations[0]["tags"])
         self.assertEqual(operations[0]["links"][0]["relation"], "derived_from")
 
+    def test_promoted_tree_memory_is_marked_after_commit(self) -> None:
+        tmp = make_temp_dir()
+        memory = MemoryStore(tmp / "memory")
+        tree_memory = TreeMemoryStore(tmp / "memory" / "tree")
+        tree_memory.remember("tree-a", "稳定结论", memory_type="decision", confidence=0.95)
+        operations = KnowledgeCompiler().compile_tree_memory(
+            tree_memory.promotion_candidates("tree-a"),
+            session_uri="ctx://sessiontrees/archives/2026/06/02/s-c",
+        )
+        memory.commit_session_archive(
+            "ctx://sessiontrees/archives/2026/06/02/s-c",
+            "summary",
+            operations,
+            {"session_id": "s", "compaction_id": "c", "debug": {}},
+        )
+        for item in tree_memory.promotion_candidates("tree-a"):
+            tree_memory.mark_promoted("tree-a", item.id)
+
+        self.assertTrue((tmp / "data" / "knowledge" / "context" / "index.jsonl").exists())
+        self.assertEqual(tree_memory.items("tree-a")[0].status, "promoted")
+
 
 if __name__ == "__main__":
     unittest.main()
-

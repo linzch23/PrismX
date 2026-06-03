@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .runtime_paths import RuntimePaths
 from .tree_memory import TreeMemoryStore
 
 
@@ -23,9 +25,11 @@ class WorkspaceStore:
 
     def __init__(self, root: Path, tree: Any) -> None:
         self.root = Path(root)
+        self.paths = RuntimePaths(self.root)
         self.tree = tree
-        self.tree_memory = TreeMemoryStore(self.root / "memory" / "tree")
-        self.path = self.root / "sessiontrees" / "workspace.json"
+        self.tree_memory = TreeMemoryStore(self.paths.tree_memory, legacy_root=self.paths.legacy_memory / "tree")
+        self.path = self.paths.workspace
+        self.legacy_path = self.paths.legacy_workspace
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def payload(self) -> dict[str, Any]:
@@ -76,8 +80,12 @@ class WorkspaceStore:
         data = self._load()
         project = self._project(data, project_id)
         now = _now()
-        session_id = self.tree.createSession(title=title.strip() or "New Session Tree", cwd=str(self.root))
         tree_id = _new_id("tree")
+        session_id = self.tree.createSession(
+            title=title.strip() or "New Session Tree",
+            cwd=str(self.root),
+            tree_id=tree_id,
+        )
         node = self._node(
             session_id=session_id,
             tree_id=tree_id,
@@ -140,7 +148,7 @@ class WorkspaceStore:
         if parent["treeId"] != tree_id:
             raise KeyError(f"parent session is not in tree: {parent_id}")
         now = _now()
-        session_id = self.tree.createSession(title=title.strip() or "New Session", cwd=str(self.root))
+        session_id = self.tree.createSession(title=title.strip() or "New Session", cwd=str(self.root), tree_id=tree_id)
         position = parent.get("position") or {"x": 80, "y": 120}
         node = self._node(
             session_id=session_id,
@@ -246,9 +254,10 @@ class WorkspaceStore:
         return [str(node["id"]) for node in self.active_path(session_id)]
 
     def _load(self) -> dict[str, Any]:
-        if self.path.exists():
+        load_path = self.path if self.path.exists() else self.legacy_path
+        if load_path.exists():
             try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
+                data = json.loads(load_path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     return self._normalize(data)
             except json.JSONDecodeError:
@@ -258,7 +267,9 @@ class WorkspaceStore:
         return data
 
     def _save(self, data: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(self._normalize(data), ensure_ascii=False, indent=2), encoding="utf-8")
+        self._save_tree_files(data)
 
     def _bootstrap(self) -> dict[str, Any]:
         now = _now()
@@ -372,6 +383,7 @@ class WorkspaceStore:
             if session_id in self.tree.listSessions():
                 self.tree.deleteSession(session_id)
         self.tree_memory.delete_tree(tree_id)
+        shutil.rmtree(self.paths.tree_dir(tree_id), ignore_errors=True)
         data["sessionTrees"] = [item for item in data["sessionTrees"] if item["id"] != tree_id]
         for project in data["projects"]:
             project["treeIds"] = [item for item in project.get("treeIds", []) if item != tree_id]
@@ -456,3 +468,18 @@ class WorkspaceStore:
         if session_id not in self.tree.listSessions():
             raise KeyError(f"session not found: {session_id}")
         self.tree.resumeSession(session_id)
+
+    def _save_tree_files(self, data: dict[str, Any]) -> None:
+        nodes = data.get("sessionNodes", {})
+        for tree in data.get("sessionTrees", []):
+            tree_id = str(tree.get("id") or "")
+            if not tree_id:
+                continue
+            session_ids = list(tree.get("sessionIds", []))
+            payload = {
+                **tree,
+                "sessions": [nodes[item] for item in session_ids if item in nodes],
+            }
+            path = self.paths.tree_file(tree_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

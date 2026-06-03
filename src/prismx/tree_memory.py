@@ -29,6 +29,7 @@ class TreeMemoryItem:
     content: str
     memory_type: str = "finding"
     tags: list[str] = field(default_factory=list)
+    source_session_id: str = ""
     source_branch: str = ""
     source_entry_id: str = ""
     confidence: float = 0.6
@@ -51,8 +52,13 @@ class TreeMemoryStore:
     options that sibling branches may safely recall.
     """
 
-    def __init__(self, root: Path) -> None:
-        self.root = Path(root)
+    def __init__(self, root: Path, *, legacy_root: Path | None = None) -> None:
+        root = Path(root)
+        if root.name == "tree" and root.parent.name == "memory":
+            legacy_root = legacy_root or root
+            root = root.parent.parent / "data" / "tree_memory"
+        self.root = root
+        self.legacy_root = Path(legacy_root) if legacy_root is not None else _legacy_root_for(root)
         self.root.mkdir(parents=True, exist_ok=True)
 
     def remember(
@@ -63,6 +69,7 @@ class TreeMemoryStore:
         title: str | None = None,
         memory_type: str = "finding",
         tags: list[str] | None = None,
+        source_session_id: str = "",
         source_branch: str = "",
         source_entry_id: str = "",
         confidence: float = 0.6,
@@ -81,6 +88,7 @@ class TreeMemoryStore:
             content=content,
             memory_type=memory_type,
             tags=list(tags or []),
+            source_session_id=source_session_id,
             source_branch=source_branch,
             source_entry_id=source_entry_id,
             confidence=float(confidence),
@@ -95,7 +103,7 @@ class TreeMemoryStore:
         tokens = _tokens(query)
         scored: list[tuple[float, TreeMemoryItem]] = []
         for item in self.items(tree_id):
-            if item.status != "active":
+            if item.status not in {"active", "promote_requested"}:
                 continue
             haystacks = {
                 "title": item.title.lower(),
@@ -137,32 +145,35 @@ class TreeMemoryStore:
 
     def items(self, tree_id: str) -> list[TreeMemoryItem]:
         state: dict[str, TreeMemoryItem] = {}
-        path = self._path(tree_id)
-        if not path.exists():
+        paths = [self._legacy_path(tree_id), self._path(tree_id)]
+        if not any(path.exists() for path in paths):
             return []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
+        for path in paths:
+            if not path.exists():
                 continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            item_data = event.get("item") or {}
-            item_id = item_data.get("id")
-            if not item_id:
-                continue
-            if event.get("op") == "delete":
-                state.pop(item_id, None)
-                continue
-            state[item_id] = TreeMemoryItem(**item_data)
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                item_data = event.get("item") or {}
+                item_id = item_data.get("id")
+                if not item_id:
+                    continue
+                if event.get("op") == "delete":
+                    state.pop(item_id, None)
+                    continue
+                state[item_id] = TreeMemoryItem(**item_data)
         return sorted(state.values(), key=lambda item: item.updated_at, reverse=True)
 
     def promotion_candidates(self, tree_id: str) -> list[TreeMemoryItem]:
         candidates = []
         for item in self.items(tree_id):
-            if item.status != "active":
+            if item.status not in {"active", "promote_requested"}:
                 continue
-            if item.confidence >= 0.85 or item.reuse_count >= 2:
+            if item.confidence >= 0.85 or item.reuse_count >= 2 or item.status == "promote_requested":
                 candidates.append(item)
         return candidates
 
@@ -179,6 +190,15 @@ class TreeMemoryStore:
         if item is None:
             return False
         self._append(tree_id, {"op": "delete", "item": asdict(item)})
+        return True
+
+    def mark_promoted(self, tree_id: str, item_id: str) -> bool:
+        item = next((entry for entry in self.items(tree_id) if entry.id == item_id), None)
+        if item is None:
+            return False
+        item.status = "promoted"
+        item.updated_at = _now()
+        self._append(tree_id, {"op": "upsert", "item": asdict(item)})
         return True
 
     def delete_tree(self, tree_id: str) -> None:
@@ -198,6 +218,7 @@ class TreeMemoryStore:
             "tags": item.tags + [item.memory_type],
             "metadata": {
                 "tree_id": item.tree_id,
+                "source_session_id": item.source_session_id,
                 "source_branch": item.source_branch,
                 "source_entry_id": item.source_entry_id,
                 "memory_type": item.memory_type,
@@ -223,6 +244,10 @@ class TreeMemoryStore:
     def _path(self, tree_id: str) -> Path:
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", tree_id)
         return self.root / f"{safe}.jsonl"
+
+    def _legacy_path(self, tree_id: str) -> Path:
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", tree_id)
+        return self.legacy_root / f"{safe}.jsonl"
 
 
 def _render_full(item: TreeMemoryItem) -> str:
@@ -258,3 +283,10 @@ def _tokens(text: str) -> set[str]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _legacy_root_for(root: Path) -> Path | None:
+    path = Path(root)
+    if path.name == "tree" and path.parent.name == "memory":
+        return path
+    return path.parent.parent / "memory" / "tree" if path.name == "tree_memory" else path
