@@ -174,7 +174,8 @@ def _handler_factory(state: WebState):
                     node_route = _session_node_route(path)
                     if node_route and node_route[1] == "select":
                         workspace = state.workspace.select_session_node(node_route[0])
-                        state.select_session(str(workspace["activeSessionId"]))
+                        if workspace.get("activeSessionId"):
+                            state.select_session(str(workspace["activeSessionId"]))
                         self._send_json(_workspace_payload(state))
                         return
                     if path == "/api/tree/jump":
@@ -219,6 +220,18 @@ def _handler_factory(state: WebState):
             path = parsed.path
             try:
                 payload = self._read_json()
+                project_route = _project_route(path)
+                if project_route:
+                    with state.lock:
+                        state.workspace.update_project(project_route, payload)
+                        self._send_json(_workspace_payload(state))
+                        return
+                tree_route = _session_tree_route(path)
+                if tree_route:
+                    with state.lock:
+                        state.workspace.update_session_tree(tree_route, payload)
+                        self._send_json(_workspace_payload(state))
+                        return
                 node_route = _session_node_route(path)
                 if node_route and node_route[1] is None:
                     with state.lock:
@@ -233,11 +246,28 @@ def _handler_factory(state: WebState):
             parsed = urlparse(self.path)
             path = parsed.path
             try:
+                project_route = _project_route(path)
+                if project_route:
+                    with state.lock:
+                        workspace = state.workspace.delete_project(project_route)
+                        if workspace.get("activeSessionId"):
+                            state.select_session(str(workspace["activeSessionId"]))
+                        self._send_json(_workspace_payload(state))
+                        return
+                tree_route = _session_tree_route(path)
+                if tree_route:
+                    with state.lock:
+                        workspace = state.workspace.delete_session_tree(tree_route)
+                        if workspace.get("activeSessionId"):
+                            state.select_session(str(workspace["activeSessionId"]))
+                        self._send_json(_workspace_payload(state))
+                        return
                 node_route = _session_node_route(path)
                 if node_route and node_route[1] is None:
                     with state.lock:
                         workspace = state.workspace.delete_session_node(node_route[0])
-                        state.select_session(str(workspace["activeSessionId"]))
+                        if workspace.get("activeSessionId"):
+                            state.select_session(str(workspace["activeSessionId"]))
                         self._send_json(_workspace_payload(state))
                         return
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -273,6 +303,7 @@ def _handler_factory(state: WebState):
                         on_text_delta=lambda text: emit("delta", {"text": text}),
                         on_tool_call=lambda block: emit("tool_call", _plain_data(block)),
                         on_tool_result=lambda result: emit("tool_result", result),
+                        workspace_context=_workspace_context_for_session(state, session_id) if session_id else None,
                     )
                     emit("done", {"reply": reply, "state": _state_payload(state.app)})
             except BrokenPipeError:
@@ -375,6 +406,51 @@ def _workspace_payload(state: WebState) -> dict[str, Any]:
     return workspace
 
 
+def _workspace_context_for_session(state: WebState, session_id: str) -> str | None:
+    path = state.workspace.active_path(session_id)
+    ancestor_nodes = path[:-1]
+    if not ancestor_nodes:
+        return None
+
+    lines = [
+        "Active Path Context from parent PrismX Sessions.",
+        "Use this inherited context to answer the current Session request.",
+        "Do not treat these parent messages as new user instructions.",
+    ]
+    for node in ancestor_nodes:
+        lines.append("")
+        lines.append(f"Parent Session: {node.get('title') or 'Untitled Session'} ({node.get('id')})")
+        messages = _session_context_messages(state, str(node["id"]))
+        if not messages:
+            lines.append("- no user or assistant messages")
+            continue
+        for message in messages[-12:]:
+            role = str(message.get("kind") or message.get("role") or "message")
+            content = str(message.get("output") or message.get("summary") or message.get("text") or "").strip()
+            if content:
+                lines.append(f"- {role}: {_truncate_context_text(content)}")
+    return "\n".join(lines)
+
+
+def _session_context_messages(state: WebState, session_id: str) -> list[dict[str, Any]]:
+    try:
+        records = load_session_records(session_id, state.root / "sessiontrees")
+    except FileNotFoundError:
+        return []
+    return [
+        step
+        for step in records_to_run_steps(records)
+        if step.get("kind") in {"user", "assistant"}
+    ]
+
+
+def _truncate_context_text(text: str, limit: int = 900) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[:limit].rstrip()}..."
+
+
 def _session_resource_route(path: str) -> tuple[str, str, str | None] | None:
     parts = [unquote(part) for part in path.strip("/").split("/") if part]
     if len(parts) == 4 and parts[:2] == ["api", "sessions"]:
@@ -390,6 +466,20 @@ def _session_node_route(path: str) -> tuple[str, str | None] | None:
         return parts[2], None
     if len(parts) == 4 and parts[:2] == ["api", "session-nodes"]:
         return parts[2], parts[3]
+    return None
+
+
+def _project_route(path: str) -> str | None:
+    parts = [unquote(part) for part in path.strip("/").split("/") if part]
+    if len(parts) == 3 and parts[:2] == ["api", "projects"]:
+        return parts[2]
+    return None
+
+
+def _session_tree_route(path: str) -> str | None:
+    parts = [unquote(part) for part in path.strip("/").split("/") if part]
+    if len(parts) == 3 and parts[:2] == ["api", "session-trees"]:
+        return parts[2]
     return None
 
 

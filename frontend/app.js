@@ -12,7 +12,14 @@ const state = {
   longTermKnowledgeItems: [],
   treeView: { x: 0, y: 0, scale: 1 },
   drag: null,
+  abortController: null,
 };
+
+const NODE_WIDTH = 260;
+const NODE_HEIGHT = 112;
+const HORIZONTAL_GAP = 170;
+const VERTICAL_GAP = 72;
+const TREE_PADDING = 56;
 
 const nodes = {
   app: document.querySelector("#app"),
@@ -113,6 +120,8 @@ function ProjectItem(project) {
       el("strong", {}, project.title || "Untitled Project"),
       el("em", {}, String(trees.length)),
       projectRowAction("+", "New Session Tree", () => createSessionTree(project.id)),
+      projectRowAction("R", "Rename Project", () => renameProject(project.id)),
+      projectRowAction("X", "Delete Project", () => deleteProject(project.id)),
     ]),
     el("div", { class: "tree-list" }, trees.map((tree) => TreeLink(project, tree))),
   ]);
@@ -121,14 +130,19 @@ function ProjectItem(project) {
 function TreeLink(project, tree) {
   const selected = project.id === state.activeProjectId && tree.id === state.activeTreeId;
   const activeSession = findSessionInTree(tree, tree.activeSessionId);
-  return el("button", {
+  return el("div", {
     class: `tree-link ${selected ? "selected" : ""}`,
-    type: "button",
     onclick: () => selectSession(tree.activeSessionId || tree.rootSessionId),
   }, [
-    el("span", {}, "Session Tree"),
-    el("strong", {}, tree.title || "Untitled Tree"),
-    activeSession ? el("small", {}, activeSession.title) : null,
+    el("div", { class: "tree-link-copy" }, [
+      el("span", {}, "Session Tree"),
+      el("strong", {}, tree.title || "Untitled Tree"),
+      activeSession ? el("small", {}, activeSession.title) : null,
+    ]),
+    el("div", { class: "tree-row-actions" }, [
+      projectRowAction("R", "Rename Session Tree", () => renameSessionTree(tree.id)),
+      projectRowAction("X", "Delete Session Tree", () => deleteSessionTree(tree.id)),
+    ]),
   ]);
 }
 
@@ -222,9 +236,9 @@ function CommandInput() {
       el("button", {
         id: "send-button",
         class: "send-button",
-        type: "submit",
-        disabled: state.sending ? "disabled" : null,
-      }, state.sending ? "Sending" : "Send"),
+        type: state.sending ? "button" : "submit",
+        onclick: state.sending ? stopGeneration : null,
+      }, state.sending ? "Stop" : "Send"),
     ]),
   ]);
 }
@@ -233,7 +247,8 @@ function TreeWorkspace() {
   const tree = getActiveTree();
   const sessions = tree.sessions || [];
   const activeId = state.activeSessionId;
-  const edges = sessions.filter((session) => session.parentId);
+  const layout = layoutSessionTree(sessions, tree.rootSessionId);
+  const activePathIds = new Set(getActivePath(activeId).map((session) => session.id));
   return el("section", { class: "workspace-view tree-workspace" }, [
     TitleRow("Tree-Guided Memory Layer", "Session Tree", [
       button("New Child Session", "primary", () => createChildSession(activeId)),
@@ -246,33 +261,47 @@ function TreeWorkspace() {
       onpointerleave: endPointer,
       onwheel: zoomCanvas,
     }, [
-      el("svg", { class: "tree-edges" }, edges.map((session) => TreeEdge(session))),
       el("div", {
         class: "tree-plane",
-        style: `transform: translate(${state.treeView.x}px, ${state.treeView.y}px) scale(${state.treeView.scale});`,
-      }, sessions.map((session) => SessionNodeCard(session))),
+        style: [
+          `width: ${layout.width}px`,
+          `height: ${layout.height}px`,
+          `transform: translate(${state.treeView.x}px, ${state.treeView.y}px) scale(${state.treeView.scale})`,
+        ].join("; "),
+      }, [
+        el("svg", {
+          class: "tree-edges",
+          width: String(layout.width),
+          height: String(layout.height),
+        }, layout.edges.map((edge) => TreeEdge(edge, activePathIds))),
+        ...layout.nodes.map((session) => SessionNodeCard(session, activePathIds)),
+      ]),
     ]),
   ]);
 }
 
-function TreeEdge(session) {
-  const parent = getSessionById(session.parentId);
-  if (!parent) return null;
-  const a = screenPoint(parent.position, 210, 44);
-  const b = screenPoint(session.position, 0, 44);
+function TreeEdge(edge, activePathIds) {
+  const a = { x: edge.parent.x + NODE_WIDTH, y: edge.parent.y + NODE_HEIGHT / 2 };
+  const b = { x: edge.child.x, y: edge.child.y + NODE_HEIGHT / 2 };
   const mid = (a.x + b.x) / 2;
+  const active = activePathIds.has(edge.parent.id) && activePathIds.has(edge.child.id);
   return el("path", {
+    class: active ? "active" : "",
     d: `M ${a.x} ${a.y} C ${mid} ${a.y}, ${mid} ${b.y}, ${b.x} ${b.y}`,
   });
 }
 
-function SessionNodeCard(session) {
+function SessionNodeCard(session, activePathIds) {
   const active = session.id === state.activeSessionId;
+  const inPath = activePathIds.has(session.id);
   const root = session.id === getActiveTree()?.rootSessionId;
   return el("article", {
-    class: `session-card ${active ? "selected" : ""}`,
-    style: `left: ${session.position?.x || 0}px; top: ${session.position?.y || 0}px;`,
-    onpointerdown: (event) => startNodeDrag(event, session.id),
+    class: `session-card ${inPath ? "path" : ""} ${active ? "selected" : ""}`,
+    style: `left: ${session.x}px; top: ${session.y}px;`,
+    onclick: (event) => {
+      event.stopPropagation();
+      selectSession(session.id);
+    },
     ondblclick: (event) => {
       event.stopPropagation();
       renameSession(session.id);
@@ -292,18 +321,21 @@ function SessionNodeCard(session) {
 }
 
 function MemoryWorkspace() {
-  const path = getSessionPath();
+  const path = getActivePath();
   const memoryItems = getTreeMemoryForActiveTree();
   const knowledge = getKnowledgeForActiveContext();
   const stats = getWorkingContextStats();
   return el("section", { class: "workspace-view memory-workspace" }, [
     TitleRow("Tree-Guided Memory Layer", "Memory Recall", []),
     el("div", { class: "memory-grid" }, [
-      ContextCard("Active Path Context", path.map((session) => session.title)),
+      ContextCard("Active Path Context", path.map((session, index) =>
+        `${index + 1}. ${session.title} / ${getMessagesForSession(session.id).length} messages`
+      )),
       ContextCard("Tree Memory Recall", memoryItems.length ? memoryItems.map(renderMemoryLine) : ["No tree memory items for this tree yet."]),
       ContextCard("Long-term Knowledge Recall", knowledge.map((item) => item.content || item.title)),
       ContextCard("Working Context Preview", [
         `Active Path Sessions: ${stats.activePathSessions}`,
+        `Active Path Messages: ${stats.activePathMessages}`,
         `Tree Memory Items: ${stats.treeMemoryItems}`,
         `Current Session Messages: ${stats.currentSessionMessages}`,
         `Long-term Knowledge Items: ${stats.longTermKnowledgeItems}`,
@@ -337,12 +369,50 @@ async function createProject() {
   render();
 }
 
+async function renameProject(projectId) {
+  const project = state.projects.find((item) => item.id === projectId);
+  if (!project) return;
+  const title = prompt("Rename Project", project.title)?.trim();
+  if (!title || title === project.title) return;
+  applyWorkspace(await apiPatch(`/api/projects/${encodeURIComponent(projectId)}`, { title }));
+  render();
+}
+
+async function deleteProject(projectId) {
+  const project = state.projects.find((item) => item.id === projectId);
+  if (!project) return;
+  const hasTrees = (project.treeIds || []).length > 0;
+  const message = hasTrees
+    ? "This project contains session trees. Delete the entire project?"
+    : "Delete this project?";
+  if (!confirm(message)) return;
+  applyWorkspace(await apiDelete(`/api/projects/${encodeURIComponent(projectId)}`));
+  render();
+}
+
 async function createSessionTree(projectId) {
   const project = state.projects.find((item) => item.id === projectId) || getActiveProject() || state.projects[0];
   if (!project) return;
   const title = prompt("Session Tree title", "New Session Tree");
   if (!title) return;
   applyWorkspace(await apiPost("/api/session-trees", { projectId: project.id, title }));
+  render();
+}
+
+async function renameSessionTree(treeId) {
+  const tree = state.sessionTrees.find((item) => item.id === treeId);
+  if (!tree) return;
+  const title = prompt("Rename Session Tree", tree.title)?.trim();
+  if (!title || title === tree.title) return;
+  applyWorkspace(await apiPatch(`/api/session-trees/${encodeURIComponent(treeId)}`, { title }));
+  render();
+}
+
+async function deleteSessionTree(treeId) {
+  const tree = state.sessionTrees.find((item) => item.id === treeId);
+  if (!tree) return;
+  if (!confirm("Delete this session tree and all its sessions?")) return;
+  applyWorkspace(await apiDelete(`/api/session-trees/${encodeURIComponent(treeId)}`));
   render();
 }
 
@@ -392,6 +462,8 @@ async function sendComposerMessage(event) {
   if (!message || state.sending || !state.activeSessionId) return;
 
   state.sending = true;
+  const controller = new AbortController();
+  state.abortController = controller;
   const sessionId = state.activeSessionId;
   const userId = crypto.randomUUID();
   const assistantId = crypto.randomUUID();
@@ -404,24 +476,42 @@ async function sendComposerMessage(event) {
   render();
 
   try {
-    await sendChatStream(message, sessionId, assistantId);
+    await sendChatStream(message, sessionId, assistantId, controller, getWorkingContext(sessionId));
     const payload = await apiGet("/api/workspace");
     applyWorkspace(payload);
   } catch (error) {
-    showToast(`Send failed: ${error.message}`);
+    if (error.name === "AbortError" || controller.signal.aborted) {
+      appendLocalMessage(sessionId, {
+        id: crypto.randomUUID(),
+        role: "system",
+        createdAt: new Date().toISOString(),
+        output: "Generation stopped by user.",
+        toolCalls: [],
+      });
+    } else {
+      showToast(`Send failed: ${error.message}`);
+    }
   } finally {
+    if (state.abortController === controller) state.abortController = null;
     state.sending = false;
     render();
   }
 }
 
-async function sendChatStream(message, sessionId, assistantId) {
-  const controller = new AbortController();
+function stopGeneration() {
+  state.abortController?.abort();
+}
+
+function appendLocalMessage(sessionId, message) {
+  state.sessionMessages[sessionId] = [...getMessagesForSession(sessionId), message];
+}
+
+async function sendChatStream(message, sessionId, assistantId, controller, workingContext) {
   const timeout = window.setTimeout(() => controller.abort(), 120000);
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
-    body: JSON.stringify({ message, sessionId }),
+    body: JSON.stringify({ message, sessionId, workingContext }),
     signal: controller.signal,
   });
   if (!response.ok || !response.body) {
@@ -477,22 +567,6 @@ function startCanvasPan(event) {
   event.currentTarget.setPointerCapture(event.pointerId);
 }
 
-function startNodeDrag(event, sessionId) {
-  const session = getSessionById(sessionId);
-  if (!session) return;
-  state.drag = {
-    type: "node",
-    sessionId,
-    startX: event.clientX,
-    startY: event.clientY,
-    x: session.position?.x || 0,
-    y: session.position?.y || 0,
-  };
-  event.currentTarget.setPointerCapture(event.pointerId);
-  event.stopPropagation();
-  selectSession(sessionId);
-}
-
 function movePointer(event) {
   if (!state.drag) return;
   if (state.drag.type === "canvas") {
@@ -500,31 +574,10 @@ function movePointer(event) {
     state.treeView.y = state.drag.y + event.clientY - state.drag.startY;
     render();
   }
-  if (state.drag.type === "node") {
-    const session = getSessionById(state.drag.sessionId);
-    if (!session) return;
-    session.position = {
-      x: Math.round(state.drag.x + (event.clientX - state.drag.startX) / state.treeView.scale),
-      y: Math.round(state.drag.y + (event.clientY - state.drag.startY) / state.treeView.scale),
-    };
-    render();
-  }
 }
 
-async function endPointer() {
-  const drag = state.drag;
+function endPointer() {
   state.drag = null;
-  if (drag?.type === "node") {
-    const session = getSessionById(drag.sessionId);
-    if (session) {
-      try {
-        applyWorkspace(await apiPatch(`/api/session-nodes/${encodeURIComponent(session.id)}`, { position: session.position }));
-        render();
-      } catch (error) {
-        showToast(`Could not save position: ${error.message}`);
-      }
-    }
-  }
 }
 
 function zoomCanvas(event) {
@@ -563,14 +616,42 @@ function getActiveMessages() {
   return getMessagesForSession(state.activeSessionId);
 }
 
-function getSessionPath() {
+function getActivePath(activeSessionId = state.activeSessionId) {
   const path = [];
-  let current = getActiveSession();
+  let current = getSessionById(activeSessionId);
   while (current) {
     path.unshift(current);
     current = current.parentId ? getSessionById(current.parentId) : null;
   }
   return path;
+}
+
+function getSessionPath() {
+  return getActivePath();
+}
+
+function getActivePathMessages(activeSessionId = state.activeSessionId) {
+  return getActivePath(activeSessionId).flatMap((session) => getMessagesForSession(session.id));
+}
+
+function getWorkingContext(activeSessionId = state.activeSessionId) {
+  const activePath = getActivePath(activeSessionId);
+  const knowledge = getKnowledgeForActiveContext();
+  return {
+    activeProjectId: state.activeProjectId,
+    activeTreeId: state.activeTreeId,
+    activeSessionId,
+    activePath: activePath.map((session) => ({
+      id: session.id,
+      title: session.title,
+      parentId: session.parentId,
+      messageCount: getMessagesForSession(session.id).length,
+    })),
+    activePathMessageCount: getActivePathMessages(activeSessionId).length,
+    treeMemoryItemCount: getTreeMemoryForActiveTree().length,
+    currentSessionMessageCount: getMessagesForSession(activeSessionId).length,
+    longTermKnowledgeItemCount: knowledge.length,
+  };
 }
 
 function getTreeMemoryForActiveTree() {
@@ -592,10 +673,63 @@ function getKnowledgeForActiveContext() {
 
 function getWorkingContextStats() {
   return {
-    activePathSessions: getSessionPath().length,
+    activePathSessions: getActivePath().length,
+    activePathMessages: getActivePathMessages().length,
     treeMemoryItems: getTreeMemoryForActiveTree().length,
     currentSessionMessages: getActiveMessages().length,
     longTermKnowledgeItems: getKnowledgeForActiveContext().length,
+  };
+}
+
+function layoutSessionTree(sessions, rootSessionId) {
+  const byId = new Map(sessions.map((session) => [session.id, { ...session, x: 0, y: 0 }]));
+  const childrenByParent = new Map();
+  sessions.forEach((session) => {
+    if (!session.parentId || !byId.has(session.parentId)) return;
+    if (!childrenByParent.has(session.parentId)) childrenByParent.set(session.parentId, []);
+    childrenByParent.get(session.parentId).push(byId.get(session.id));
+  });
+  const roots = [];
+  const configuredRoot = byId.get(rootSessionId);
+  if (configuredRoot) roots.push(configuredRoot);
+  sessions.forEach((session) => {
+    if (!session.parentId && session.id !== rootSessionId) roots.push(byId.get(session.id));
+  });
+  if (!roots.length && sessions[0]) roots.push(byId.get(sessions[0].id));
+
+  const ordered = [];
+  let nextY = TREE_PADDING;
+  let maxDepth = 0;
+
+  function place(node, depth) {
+    const children = (childrenByParent.get(node.id) || []).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+    node.x = TREE_PADDING + depth * (NODE_WIDTH + HORIZONTAL_GAP);
+    maxDepth = Math.max(maxDepth, depth);
+    if (!children.length) {
+      node.y = nextY;
+      nextY += NODE_HEIGHT + VERTICAL_GAP;
+    } else {
+      children.forEach((child) => place(child, depth + 1));
+      node.y = (children[0].y + children[children.length - 1].y) / 2;
+    }
+    ordered.push(node);
+  }
+
+  roots.forEach((root, index) => {
+    if (index > 0) nextY += VERTICAL_GAP;
+    place(root, 0);
+  });
+
+  const edges = [];
+  ordered.forEach((node) => {
+    (childrenByParent.get(node.id) || []).forEach((child) => edges.push({ parent: node, child }));
+  });
+
+  return {
+    nodes: ordered,
+    edges,
+    width: TREE_PADDING * 2 + (maxDepth + 1) * NODE_WIDTH + maxDepth * HORIZONTAL_GAP,
+    height: Math.max(nextY + TREE_PADDING, NODE_HEIGHT + TREE_PADDING * 2),
   };
 }
 
@@ -607,13 +741,6 @@ function collectDescendantIds(sessionId) {
 
 function renderMemoryLine(item) {
   return `${item.type || "finding"} / ${item.sourceSessionId || "tree"} / ${item.content}`;
-}
-
-function screenPoint(position = {}, offsetX = 0, offsetY = 0) {
-  return {
-    x: (position.x || 0) * state.treeView.scale + state.treeView.x + offsetX * state.treeView.scale,
-    y: (position.y || 0) * state.treeView.scale + state.treeView.y + offsetY * state.treeView.scale,
-  };
 }
 
 function infoPill(label, value) {

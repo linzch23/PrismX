@@ -16,6 +16,7 @@ TREE_MEMORY_TYPES = {
     "todo",
     "finding",
     "hypothesis",
+    "deprecated",
     "discarded_option",
 }
 
@@ -172,6 +173,16 @@ class TreeMemoryStore:
         item.reuse_count += 1
         item.updated_at = _now()
         self._append(tree_id, {"op": "upsert", "item": asdict(item)})
+
+    def delete(self, tree_id: str, item_id: str) -> bool:
+        item = next((entry for entry in self.items(tree_id) if entry.id == item_id), None)
+        if item is None:
+            return False
+        self._append(tree_id, {"op": "delete", "item": asdict(item)})
+        return True
+
+    def delete_tree(self, tree_id: str) -> None:
+        self._path(tree_id).unlink(missing_ok=True)
 
     def _to_context_result(self, item: TreeMemoryItem) -> dict[str, Any]:
         return {

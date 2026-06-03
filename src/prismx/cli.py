@@ -1,38 +1,66 @@
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from .loop import AgentApp
+from .tree_memory import TREE_MEMORY_TYPES
+from .workspace import WorkspaceStore
 
 
-HELP = """可用命令：
-  /help     显示这份帮助
-  /tools    列出已注册工具
-  /todos    查看当前任务列表
-  /memory   查看 Memory OS（结构化长期记忆）
-  /context  查看最近 ContextObject
-  /mcp      查看 MCP server 和工具状态
-  /skills   列出已安装的 Skills
-  /skill NAME 显示指定 Skill 的详细内容
-  /compact  立即压缩当前会话上下文
-  /team     查看持久队友
-  /inbox    读取 lead inbox
-  /tree [--filter default|no-tools|user-only|labeled-only|all]  查看会话树
-  /jump ID  跳转到已有会话树节点
-  /fork ID  从已有节点分叉；下一条输入会创建兄弟分支
-  /clone    克隆当前 active branch 到新 session 并切换过去
-  /label ID LABEL  给会话树节点打标签
-  /exit     退出
+HELP = """Available commands:
+
+Basics:
+  /help
+  /exit
+
+Agent Runtime:
+  /agent
+  /run
+  /team
+  /tools
+  /mcp
+
+TreeSession:
+  /tree
+  /tree list
+  /tree new NAME
+  /tree rename ID NAME
+  /tree delete ID
+
+  /session
+  /session new NAME
+  /session rename ID NAME
+  /session delete ID
+
+  /switch ID
+
+TGM Memory:
+  /path
+  /memory
+  /memory add TYPE CONTENT
+  /memory delete ID
+
+  /recall
+  /working-context
+  /knowledge
+
+Debug:
+  /state
+  /debug
 """
 
 
 def main() -> None:
     app = AgentApp()
+    workspace = WorkspaceStore(app.root, app.tree)
     try:
-        print(f"prismx 已就绪。provider={app.provider} model={app.model} workspace={app.workspace}")
-        print("输入 /help 查看命令。\n")
+        print(f"prismx ready. provider={app.provider} model={app.model} workspace={app.workspace}")
+        print("Type /help for commands.\n")
 
         while True:
             try:
-                user_input = input("你> ").strip()
+                user_input = input("you> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 return
@@ -41,88 +69,300 @@ def main() -> None:
                 continue
             if user_input in {"/exit", "/quit"}:
                 return
-            if user_input == "/help":
-                print(HELP)
-                continue
-            if user_input == "/tools":
-                print("\n".join(app.registry.names()))
-                print()
-                continue
-            if user_input == "/todos":
-                print(app.todos.render() + "\n")
-                continue
-            if user_input == "/memory":
-                print(app.memory.render_memory() + "\n")
-                continue
-            if user_input == "/context":
-                import json
+            if user_input.startswith("/"):
+                try:
+                    handled = handle_command(app, workspace, user_input)
+                except Exception as exc:
+                    print(f"Error: {exc}\n")
+                    handled = True
+                if handled:
+                    continue
 
-                print("# Working Set")
-                print(json.dumps(app.working_context_debug(), ensure_ascii=False, indent=2))
-                print("\n# Recent ContextObjects")
-                results = app.memory.list_context(limit=20)
-                if not results:
-                    print("(No context objects.)\n")
-                else:
-                    for r in results:
-                        print(f"- {r['uri']} [{r.get('context_type', '?')}] {r.get('title', '?')} "
-                              f"trust={r.get('trust_score', 0):.1f}")
-                    print()
-                continue
-            if user_input == "/mcp":
-                print(app.mcp.report() + "\n")
-                continue
-            if user_input == "/skills":
-                print(app.skills.summary())
-                print()
-                continue
-            if user_input.startswith("/skill"):
-                parts = user_input.split(maxsplit=1)
-                if len(parts) < 2:
-                    print("用法: /skill NAME")
-                else:
-                    name = parts[1].strip()
-                    print(app.skills.load(name))
-                print()
-                continue
-            if user_input == "/compact":
-                print(("已压缩当前上下文。" if app.compact_now() else "当前没有需要压缩的内容。") + "\n")
-                continue
-            if user_input == "/team":
-                print(app.team.list_all() + "\n")
-                continue
-            if user_input == "/inbox":
-                import json
-
-                print(json.dumps(app.team_bus.read_inbox("lead"), ensure_ascii=False, indent=2) + "\n")
-                continue
-            if user_input.startswith("/tree"):
-                parts = user_input.split()
-                filter_mode = "default"
-                if len(parts) == 3 and parts[1] == "--filter":
-                    filter_mode = parts[2]
-                print(app.tree_view(filter_mode) + "\n")
-                continue
-            if user_input.startswith("/jump "):
-                app.jump_to_entry(user_input.split(maxsplit=1)[1].strip())
-                print("已更新 active leaf。\n")
-                continue
-            if user_input.startswith("/fork "):
-                app.fork_from_entry(user_input.split(maxsplit=1)[1].strip())
-                print("已选择分叉点。下一条输入会创建新分支。\n")
-                continue
-            if user_input == "/clone":
-                new_session_id = app.clone_active_branch()
-                print(f"已将当前 active branch 克隆到 session {new_session_id}。\n")
-                continue
-            if user_input.startswith("/label "):
-                _, entry_id, label = user_input.split(maxsplit=2)
-                app.label_entry(entry_id, label)
-                print("标签已保存。\n")
-                continue
-
-            print("助手> ", end="", flush=True)
+            print("assistant> ", end="", flush=True)
             app.ask(user_input, on_text_delta=lambda text: print(text, end="", flush=True))
+            workspace.payload()
             print("\n")
     finally:
         app.close()
+
+
+def handle_command(app: AgentApp, workspace: WorkspaceStore, command: str) -> bool:
+    if command == "/help":
+        print(HELP)
+        return True
+    if command == "/tools":
+        print("\n".join(app.registry.names()) + "\n")
+        return True
+    if command == "/mcp":
+        print(app.mcp.report() + "\n")
+        return True
+    if command == "/team":
+        print(app.team.list_all() + "\n")
+        return True
+    if command == "/agent":
+        print(_agent_state(app, workspace) + "\n")
+        return True
+    if command == "/run":
+        print("Type a normal message to run the Agent Loop in the active Session.\n")
+        return True
+    if command == "/tree":
+        print(_render_tree(workspace.payload()) + "\n")
+        return True
+    if command == "/tree list":
+        print(_tree_list(workspace.payload()) + "\n")
+        return True
+    if command.startswith("/tree new "):
+        title = command.removeprefix("/tree new ").strip()
+        payload = workspace.payload()
+        project_id = payload.get("activeProjectId")
+        if not project_id:
+            payload = workspace.create_project("PrismX Workspace")
+            project_id = payload["activeProjectId"]
+        payload = workspace.create_session_tree(str(project_id), title)
+        _select_session(app, workspace, str(payload["activeSessionId"]))
+        print(f"Created SessionTree {payload['activeTreeId']}.\n")
+        return True
+    if command.startswith("/tree rename "):
+        tree_id, title = _split_id_text(command, "/tree rename ")
+        workspace.update_session_tree(tree_id, {"title": title})
+        print("SessionTree renamed.\n")
+        return True
+    if command.startswith("/tree delete "):
+        tree_id = command.removeprefix("/tree delete ").strip()
+        payload = workspace.delete_session_tree(tree_id)
+        if payload.get("activeSessionId"):
+            _select_session(app, workspace, str(payload["activeSessionId"]))
+        print("SessionTree deleted.\n")
+        return True
+    if command == "/session":
+        print(_session_info(workspace.payload()) + "\n")
+        return True
+    if command.startswith("/session new "):
+        title = command.removeprefix("/session new ").strip()
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        parent_id = payload.get("activeSessionId")
+        if not tree_id or not parent_id:
+            print("No active SessionTree. Use /tree new NAME first.\n")
+            return True
+        payload = workspace.create_session_node(str(tree_id), str(parent_id), title)
+        _select_session(app, workspace, str(payload["activeSessionId"]))
+        print(f"Created child Session {payload['activeSessionId']}.\n")
+        return True
+    if command.startswith("/session rename "):
+        session_id, title = _split_id_text(command, "/session rename ")
+        workspace.update_session_node(session_id, {"title": title})
+        print("Session renamed.\n")
+        return True
+    if command.startswith("/session delete "):
+        session_id = command.removeprefix("/session delete ").strip()
+        payload = workspace.delete_session_node(session_id)
+        if payload.get("activeSessionId"):
+            _select_session(app, workspace, str(payload["activeSessionId"]))
+        print("Session deleted.\n")
+        return True
+    if command.startswith("/switch "):
+        session_id = command.removeprefix("/switch ").strip()
+        payload = workspace.select_session_node(session_id)
+        _select_session(app, workspace, str(payload["activeSessionId"]))
+        print(f"Switched to Session {session_id}.\n")
+        return True
+    if command == "/path":
+        print(_active_path(workspace.payload()) + "\n")
+        return True
+    if command == "/memory":
+        print(_tree_memory(app, workspace.payload()) + "\n")
+        return True
+    if command.startswith("/memory add "):
+        memory_type, content = _split_id_text(command, "/memory add ")
+        if memory_type not in TREE_MEMORY_TYPES:
+            valid = ", ".join(sorted(TREE_MEMORY_TYPES))
+            print(f"Invalid memory type. Valid types: {valid}\n")
+            return True
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        if not tree_id:
+            print("No active SessionTree.\n")
+            return True
+        uri = app.tree_memory.remember(str(tree_id), content, memory_type=memory_type)
+        print(f"Tree Memory added: {uri}\n")
+        return True
+    if command.startswith("/memory delete "):
+        item_id = command.removeprefix("/memory delete ").strip().rsplit("/", 1)[-1]
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        deleted = bool(tree_id and app.tree_memory.delete(str(tree_id), item_id))
+        print(("Tree Memory deleted." if deleted else "Tree Memory item not found.") + "\n")
+        return True
+    if command == "/recall":
+        print(_recall(app) + "\n")
+        return True
+    if command == "/working-context":
+        print(_working_context(app) + "\n")
+        return True
+    if command == "/knowledge":
+        print(_knowledge(app) + "\n")
+        return True
+    if command == "/state":
+        print(json.dumps(_state(app, workspace), ensure_ascii=False, indent=2) + "\n")
+        return True
+    if command == "/debug":
+        print(json.dumps(app.working_context_debug(), ensure_ascii=False, indent=2) + "\n")
+        return True
+    print("Unknown command. Type /help for available commands.\n")
+    return True
+
+
+def _select_session(app: AgentApp, workspace: WorkspaceStore, session_id: str) -> None:
+    workspace.select_backend_session(session_id)
+    app.session_id = session_id
+    app.history = app.tree.buildModelContext(session_id)
+
+
+def _split_id_text(command: str, prefix: str) -> tuple[str, str]:
+    rest = command.removeprefix(prefix).strip()
+    parts = rest.split(maxsplit=1)
+    if len(parts) != 2:
+        raise ValueError(f"Usage: {prefix.strip()} ID TEXT")
+    return parts[0], parts[1].strip()
+
+
+def _active_tree(payload: dict[str, Any]) -> dict[str, Any] | None:
+    active_tree_id = payload.get("activeTreeId")
+    return next((tree for tree in payload.get("sessionTrees", []) if tree.get("id") == active_tree_id), None)
+
+
+def _active_session(payload: dict[str, Any]) -> dict[str, Any] | None:
+    tree = _active_tree(payload)
+    if not tree:
+        return None
+    active_session_id = payload.get("activeSessionId")
+    return next((session for session in tree.get("sessions", []) if session.get("id") == active_session_id), None)
+
+
+def _session_by_id(payload: dict[str, Any], session_id: str | None) -> dict[str, Any] | None:
+    if not session_id:
+        return None
+    tree = _active_tree(payload)
+    if not tree:
+        return None
+    return next((session for session in tree.get("sessions", []) if session.get("id") == session_id), None)
+
+
+def _active_path_sessions(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    path = []
+    current = _active_session(payload)
+    while current:
+        path.append(current)
+        current = _session_by_id(payload, current.get("parentId"))
+    return list(reversed(path))
+
+
+def _render_tree(payload: dict[str, Any]) -> str:
+    tree = _active_tree(payload)
+    if not tree:
+        return "No SessionTree."
+    by_parent: dict[str | None, list[dict[str, Any]]] = {}
+    for session in tree.get("sessions", []):
+        by_parent.setdefault(session.get("parentId"), []).append(session)
+    lines = [f"SessionTree {tree.get('id')}: {tree.get('title')}"]
+
+    def visit(session: dict[str, Any], prefix: str = "") -> None:
+        active = " <= active" if session.get("id") == payload.get("activeSessionId") else ""
+        lines.append(f"{prefix}- {session.get('title')} ({session.get('id')}){active}")
+        for child in by_parent.get(session.get("id"), []):
+            visit(child, prefix + "  ")
+
+    root = _session_by_id(payload, tree.get("rootSessionId"))
+    if root:
+        visit(root)
+    return "\n".join(lines)
+
+
+def _tree_list(payload: dict[str, Any]) -> str:
+    if not payload.get("sessionTrees"):
+        return "No SessionTrees."
+    active = payload.get("activeTreeId")
+    return "\n".join(
+        f"- {tree.get('id')} {tree.get('title')}{' <= active' if tree.get('id') == active else ''}"
+        for tree in payload.get("sessionTrees", [])
+    )
+
+
+def _session_info(payload: dict[str, Any]) -> str:
+    session = _active_session(payload)
+    if not session:
+        return "No active Session."
+    return json.dumps(session, ensure_ascii=False, indent=2)
+
+
+def _active_path(payload: dict[str, Any]) -> str:
+    path = _active_path_sessions(payload)
+    if not path:
+        return "Active Path: (empty)"
+    return "Active Path:\n" + "\n".join(f"-> {session.get('title')} ({session.get('id')})" for session in path)
+
+
+def _tree_memory(app: AgentApp, payload: dict[str, Any]) -> str:
+    tree_id = payload.get("activeTreeId")
+    if not tree_id:
+        return "No active SessionTree."
+    items = app.tree_memory.list(str(tree_id))
+    if not items:
+        return "No Tree Memory."
+    return "\n".join(f"- {item['uri']} [{', '.join(item.get('tags', []))}] {item['overview']}" for item in items)
+
+
+def _recall(app: AgentApp) -> str:
+    results = getattr(app.runtime_context_builder, "last_results", []) or []
+    lines = ["Active Path Retrieval", "Tree Memory Retrieval", "Long-term Knowledge Retrieval"]
+    if results:
+        lines.extend(f"- {item.get('uri', item)}" for item in results)
+    else:
+        lines.append("(No runtime recall has been generated in this CLI session yet.)")
+    return "\n".join(lines)
+
+
+def _working_context(app: AgentApp) -> str:
+    if app.last_working_set is not None:
+        return app.last_working_set.render()
+    return json.dumps(app.working_context_debug(), ensure_ascii=False, indent=2)
+
+
+def _knowledge(app: AgentApp) -> str:
+    items = app.memory.list_context(prefix="mem://", limit=20)
+    if not items:
+        items = app.memory.list_context(prefix="wiki://", limit=20)
+    if not items:
+        return "No Long-term Knowledge."
+    return "\n".join(f"- {item.get('uri')} {item.get('title', '')}" for item in items)
+
+
+def _agent_state(app: AgentApp, workspace: WorkspaceStore) -> str:
+    state = _state(app, workspace)
+    return "\n".join(
+        [
+            f"Provider: {state['provider']}",
+            f"Model: {state['model']}",
+            f"Project: {state['activeProjectId'] or '(none)'}",
+            f"SessionTree: {state['activeTreeId'] or '(none)'}",
+            f"Session: {state['activeSessionId'] or '(none)'}",
+        ]
+    )
+
+
+def _state(app: AgentApp, workspace: WorkspaceStore) -> dict[str, Any]:
+    payload = workspace.payload()
+    return {
+        "provider": app.provider,
+        "model": app.model,
+        "workspace": str(app.workspace),
+        "activeProjectId": payload.get("activeProjectId"),
+        "activeTreeId": payload.get("activeTreeId"),
+        "activeSessionId": payload.get("activeSessionId"),
+        "sessions": app.tree.listSessions(),
+    }
+
+
+if __name__ == "__main__":
+    main()

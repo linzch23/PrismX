@@ -47,6 +47,15 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.assertEqual(child["parentId"], root_id)
         self.assertIn(child_id, self.tree.listSessions())
 
+    def test_active_path_returns_root_to_current_session(self) -> None:
+        payload = self.store.payload()
+        tree_id = payload["activeTreeId"]
+        root_id = payload["activeSessionId"]
+        child_id = self.store.create_session_node(tree_id, root_id, "Child")["activeSessionId"]
+        grandchild_id = self.store.create_session_node(tree_id, child_id, "Grandchild")["activeSessionId"]
+
+        self.assertEqual(self.store.active_path_session_ids(grandchild_id), [root_id, child_id, grandchild_id])
+
     def test_create_session_tree_under_specific_project_selects_new_root(self) -> None:
         first_project = self.store.payload()["activeProjectId"]
         second_project = self.store.create_project("Second Project")["activeProjectId"]
@@ -99,6 +108,40 @@ class WorkspaceStoreTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             self.store.delete_session_node(payload["activeSessionId"])
+
+    def test_project_rename_and_delete_repair_selection(self) -> None:
+        first_project = self.store.payload()["activeProjectId"]
+        second_project = self.store.create_project("Second")["activeProjectId"]
+        self.store.create_session_tree(second_project, "Second Tree")
+
+        renamed = self.store.update_project(second_project, {"title": "Renamed Project"})
+        project = next(item for item in renamed["projects"] if item["id"] == second_project)
+        self.assertEqual(project["title"], "Renamed Project")
+
+        deleted = self.store.delete_project(second_project)
+        self.assertEqual(deleted["activeProjectId"], first_project)
+        self.assertNotIn(second_project, {item["id"] for item in deleted["projects"]})
+
+        empty = self.store.delete_project(first_project)
+        self.assertEqual(empty["projects"], [])
+        self.assertIsNone(empty["activeProjectId"])
+        self.assertIsNone(empty["activeTreeId"])
+        self.assertIsNone(empty["activeSessionId"])
+
+    def test_session_tree_rename_and_delete_repair_selection(self) -> None:
+        payload = self.store.payload()
+        project_id = payload["activeProjectId"]
+        first_tree = payload["activeTreeId"]
+        second = self.store.create_session_tree(project_id, "Second Tree")
+        second_tree = second["activeTreeId"]
+
+        renamed = self.store.update_session_tree(second_tree, {"title": "Renamed Tree"})
+        tree = next(item for item in renamed["sessionTrees"] if item["id"] == second_tree)
+        self.assertEqual(tree["title"], "Renamed Tree")
+
+        deleted = self.store.delete_session_tree(second_tree)
+        self.assertEqual(deleted["activeTreeId"], first_tree)
+        self.assertNotIn(second_tree, {item["id"] for item in deleted["sessionTrees"]})
 
 
 if __name__ == "__main__":

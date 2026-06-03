@@ -213,6 +213,7 @@ class AgentApp:
         on_text_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[Any], None] | None = None,
         on_tool_result: Callable[[dict[str, str]], None] | None = None,
+        workspace_context: str | None = None,
     ) -> str:
         self.tree.append_message(self.session_id, {"role": "user", "content": user_input})
         debug = self.tree.debugBuildModelContext(self.session_id)
@@ -237,6 +238,13 @@ class AgentApp:
             runtime_context=self.last_working_set.render(),
         )
         prompt_history = self.tree.buildModelContext(self.session_id)
+        workspace_context_message = None
+        if workspace_context:
+            workspace_context_message = {
+                "role": "user",
+                "content": workspace_context,
+            }
+            prompt_history = [workspace_context_message, *prompt_history]
 
         def record_tool_call(block: Any) -> None:
             self.tree.append_tool_call(
@@ -260,7 +268,10 @@ class AgentApp:
             ),
             on_tool_call=record_tool_call,
             on_tool_result=record_tool_result,
-            history_provider=lambda: self.tree.buildModelContext(self.session_id),
+            history_provider=lambda: (
+                [workspace_context_message] if workspace_context_message else []
+            )
+            + self.tree.buildModelContext(self.session_id),
         )
         self.history = self.tree.buildModelContext(self.session_id)
 

@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .tree_memory import TreeMemoryStore
+
 
 def _now() -> str:
     from datetime import datetime, timezone
@@ -22,6 +24,7 @@ class WorkspaceStore:
     def __init__(self, root: Path, tree: Any) -> None:
         self.root = Path(root)
         self.tree = tree
+        self.tree_memory = TreeMemoryStore(self.root / "memory" / "tree")
         self.path = self.root / "sessiontrees" / "workspace.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -44,6 +47,28 @@ class WorkspaceStore:
         }
         data["projects"].append(project)
         data["activeProjectId"] = project["id"]
+        self._save(data)
+        return self._expanded_payload(data)
+
+    def update_project(self, project_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        data = self._load()
+        project = self._project(data, project_id)
+        title = str(updates.get("title") or "").strip()
+        if title:
+            project["title"] = title
+            project["updatedAt"] = _now()
+        self._save(data)
+        return self._expanded_payload(data)
+
+    def delete_project(self, project_id: str) -> dict[str, Any]:
+        data = self._load()
+        project = self._project(data, project_id)
+        for tree_id in list(project.get("treeIds", [])):
+            self._delete_session_tree_from_data(data, tree_id)
+        data["projects"] = [item for item in data["projects"] if item["id"] != project_id]
+        if data["activeProjectId"] == project_id:
+            data["activeProjectId"] = data["projects"][0]["id"] if data["projects"] else None
+        self._repair_selection(data)
         self._save(data)
         return self._expanded_payload(data)
 
@@ -79,6 +104,32 @@ class WorkspaceStore:
         data["activeTreeId"] = tree_id
         data["activeSessionId"] = session_id
         self._select_backend_session(session_id)
+        self._save(data)
+        return self._expanded_payload(data)
+
+    def update_session_tree(self, tree_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        data = self._load()
+        tree = self._session_tree(data, tree_id)
+        title = str(updates.get("title") or "").strip()
+        if title:
+            tree["title"] = title
+            tree["updatedAt"] = _now()
+            root = data["sessionNodes"].get(tree["rootSessionId"])
+            if root and root.get("title") == tree.get("title"):
+                root["updatedAt"] = tree["updatedAt"]
+        self._save(data)
+        return self._expanded_payload(data)
+
+    def delete_session_tree(self, tree_id: str) -> dict[str, Any]:
+        data = self._load()
+        tree = self._session_tree(data, tree_id)
+        project_id = tree["projectId"]
+        self._delete_session_tree_from_data(data, tree_id)
+        if data["activeTreeId"] == tree_id:
+            data["activeTreeId"] = None
+            data["activeSessionId"] = None
+        data["activeProjectId"] = project_id if any(item["id"] == project_id for item in data["projects"]) else data.get("activeProjectId")
+        self._repair_selection(data)
         self._save(data)
         return self._expanded_payload(data)
 
@@ -180,6 +231,20 @@ class WorkspaceStore:
     def select_backend_session(self, session_id: str) -> None:
         self._select_backend_session(session_id)
 
+    def active_path(self, session_id: str) -> list[dict[str, Any]]:
+        data = self._load()
+        node = self._node_by_id(data, session_id)
+        path = [node]
+        parent_id = node.get("parentId")
+        while parent_id:
+            parent = self._node_by_id(data, str(parent_id))
+            path.append(parent)
+            parent_id = parent.get("parentId")
+        return list(reversed(path))
+
+    def active_path_session_ids(self, session_id: str) -> list[str]:
+        return [str(node["id"]) for node in self.active_path(session_id)]
+
     def _load(self) -> dict[str, Any]:
         if self.path.exists():
             try:
@@ -223,20 +288,22 @@ class WorkspaceStore:
         data.setdefault("projects", [])
         data.setdefault("sessionTrees", [])
         data.setdefault("sessionNodes", {})
-        if not data["projects"]:
+        if not data["projects"] and not self.path.exists():
             now = _now()
             project_id = _new_id("project")
             data["projects"].append(
                 {"id": project_id, "title": "PrismX Workspace", "treeIds": [], "createdAt": now, "updatedAt": now}
             )
             data["activeProjectId"] = project_id
-        data.setdefault("activeProjectId", data["projects"][0]["id"])
+        data.setdefault("activeProjectId", data["projects"][0]["id"] if data["projects"] else None)
         data.setdefault("activeTreeId", data["sessionTrees"][0]["id"] if data["sessionTrees"] else None)
         data.setdefault("activeSessionId", None)
         return data
 
     def _sync_sessions(self, data: dict[str, Any]) -> bool:
         changed = False
+        if not data["projects"]:
+            return False
         project = data["projects"][0]
         known_ids = set(data["sessionNodes"])
         for index, session_id in enumerate(self.tree.listSessions()):
@@ -297,6 +364,44 @@ class WorkspaceStore:
             "activeTreeId": data.get("activeTreeId"),
             "activeSessionId": data.get("activeSessionId"),
         }
+
+    def _delete_session_tree_from_data(self, data: dict[str, Any], tree_id: str) -> None:
+        tree = self._session_tree(data, tree_id)
+        for session_id in list(tree.get("sessionIds", [])):
+            data["sessionNodes"].pop(session_id, None)
+            if session_id in self.tree.listSessions():
+                self.tree.deleteSession(session_id)
+        self.tree_memory.delete_tree(tree_id)
+        data["sessionTrees"] = [item for item in data["sessionTrees"] if item["id"] != tree_id]
+        for project in data["projects"]:
+            project["treeIds"] = [item for item in project.get("treeIds", []) if item != tree_id]
+            project["updatedAt"] = _now()
+
+    def _repair_selection(self, data: dict[str, Any]) -> None:
+        if not data["projects"]:
+            data["activeProjectId"] = None
+            data["activeTreeId"] = None
+            data["activeSessionId"] = None
+            return
+        active_project = next((item for item in data["projects"] if item["id"] == data.get("activeProjectId")), None)
+        if active_project is None:
+            active_project = data["projects"][0]
+            data["activeProjectId"] = active_project["id"]
+        project_tree_ids = set(active_project.get("treeIds", []))
+        active_tree = next(
+            (item for item in data["sessionTrees"] if item["id"] == data.get("activeTreeId") and item["id"] in project_tree_ids),
+            None,
+        )
+        if active_tree is None:
+            active_tree = next((item for item in data["sessionTrees"] if item["id"] in project_tree_ids), None)
+            data["activeTreeId"] = active_tree["id"] if active_tree else None
+        if active_tree is None:
+            data["activeSessionId"] = None
+            return
+        session_ids = set(active_tree.get("sessionIds", []))
+        if data.get("activeSessionId") not in session_ids:
+            data["activeSessionId"] = active_tree.get("activeSessionId") or active_tree.get("rootSessionId")
+        active_tree["activeSessionId"] = data["activeSessionId"]
 
     def _node(
         self,
