@@ -3,64 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PrismaX Trust Console</title>
+    <title>PrismaX Agent Workspace</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="user-nav-panel" aria-label="Navigation">
-        <header class="user-nav-head">
-          <p id="side-nav-eyebrow" class="eyebrow">Navigation</p>
-          <h2 id="side-nav-title">消息定位</h2>
-          <div class="side-nav-tabs" aria-label="Navigation mode">
-            <button class="side-nav-tab active" data-nav-mode="messages" type="button">消息列</button>
-            <button class="side-nav-tab" data-nav-mode="sessions" type="button">历史会话</button>
-          </div>
-        </header>
-        <nav id="user-message-nav" class="user-message-nav" aria-label="Side navigation"></nav>
-      </aside>
-
-      <main class="left-pane" aria-label="Agent conversation and session tree">
-        <header class="app-header">
-          <div>
-            <p class="eyebrow">PrismaX</p>
-            <h1> Agent 工作台</h1>
-          </div>
-          <div class="header-meta">
-            <span id="connection-state">loading</span>
-            <span id="session-label">session</span>
-            <button id="new-session-button" class="header-action" type="button">新会话</button>
-          </div>
-        </header>
-
-        <section class="mode-tabs" aria-label="Left pane mode">
-          <button class="mode-tab active" data-left-mode="chat" type="button">对话</button>
-          <button class="mode-tab" data-left-mode="tree" type="button">树状结构</button>
-        </section>
-
-        <section id="chat-view" class="left-view active" aria-label="Conversation"></section>
-        <section id="tree-view" class="left-view" aria-label="Session tree"></section>
-
-        <form id="composer" class="composer">
-          <textarea id="composer-input" rows="3" placeholder="输入任务，Agent 的文字、工具调用和记忆证据会沉淀到会话树..."></textarea>
-          <button id="send-button" type="submit">发送</button>
-        </form>
-      </main>
-
-      <aside class="right-pane" aria-label="Tool visualization">
-        <header class="viz-header">
-          <div>
-            <p class="eyebrow">Tool Visualization</p>
-            <h2 id="viz-title">选择一个工具调用</h2>
-          </div>
-          <div id="viz-badge" class="viz-badge">Memory OS</div>
-        </header>
-
-        <section id="viz-content" class="viz-content"></section>
-      </aside>
-    </div>
-
+    <div id="app" class="app-root"></div>
     <div id="toast" class="toast" hidden></div>
     <script src="/app.js" defer></script>
   </body>
