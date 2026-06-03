@@ -29,6 +29,7 @@ from .web_adapter import (
     records_to_tool_events,
     records_to_tree_nodes,
 )
+from .workspace import WorkspaceStore
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -40,10 +41,16 @@ class WebState:
         self.root = root
         self.frontend_dir = root / "frontend"
         self.app = AgentApp(root=root)
+        self.workspace = WorkspaceStore(root, self.app.tree)
         self.lock = threading.RLock()
 
     def close(self) -> None:
         self.app.close()
+
+    def select_session(self, session_id: str) -> None:
+        self.workspace.select_backend_session(session_id)
+        self.app.session_id = session_id
+        self.app.history = self.app.tree.buildModelContext(session_id)
 
 
 def main() -> None:
@@ -82,6 +89,10 @@ def _handler_factory(state: WebState):
                 if path == "/api/sessions":
                     with state.lock:
                         self._send_json(_sessions_payload(state.app))
+                    return
+                if path == "/api/workspace":
+                    with state.lock:
+                        self._send_json(_workspace_payload(state))
                     return
                 session_route = _session_resource_route(path)
                 if session_route is not None:
@@ -140,6 +151,32 @@ def _handler_factory(state: WebState):
                         reply = state.app.ask(message)
                         self._send_json({"reply": reply, "state": _state_payload(state.app)})
                         return
+                    if path == "/api/projects":
+                        title = str(payload.get("title", "")).strip() or "New Project"
+                        state.workspace.create_project(title)
+                        self._send_json(_workspace_payload(state), status=HTTPStatus.CREATED)
+                        return
+                    if path == "/api/session-trees":
+                        project_id = str(payload.get("projectId", "")).strip()
+                        title = str(payload.get("title", "")).strip() or "New Session Tree"
+                        workspace = state.workspace.create_session_tree(project_id, title)
+                        state.select_session(str(workspace["activeSessionId"]))
+                        self._send_json(_workspace_payload(state), status=HTTPStatus.CREATED)
+                        return
+                    if path == "/api/session-nodes":
+                        tree_id = str(payload.get("treeId", "")).strip()
+                        parent_id = str(payload.get("parentId", "")).strip()
+                        title = str(payload.get("title", "")).strip() or "New Session"
+                        workspace = state.workspace.create_session_node(tree_id, parent_id, title)
+                        state.select_session(str(workspace["activeSessionId"]))
+                        self._send_json(_workspace_payload(state), status=HTTPStatus.CREATED)
+                        return
+                    node_route = _session_node_route(path)
+                    if node_route and node_route[1] == "select":
+                        workspace = state.workspace.select_session_node(node_route[0])
+                        state.select_session(str(workspace["activeSessionId"]))
+                        self._send_json(_workspace_payload(state))
+                        return
                     if path == "/api/tree/jump":
                         state.app.jump_to_entry(_entry_id(payload))
                         self._send_json(_state_payload(state.app))
@@ -164,17 +201,44 @@ def _handler_factory(state: WebState):
                         session_id = str(payload.get("sessionId", "")).strip()
                         if session_id not in state.app.tree.listSessions():
                             raise KeyError(f"session not found: {session_id}")
-                        state.app.session_id = session_id
-                        state.app.tree.resumeSession(session_id)
-                        state.app.history = state.app.tree.buildModelContext(session_id)
+                        state.select_session(session_id)
                         self._send_json(_state_payload(state.app))
                         return
                     if path == "/api/sessions":
                         title = str(payload.get("title", "")).strip() or None
                         session_id = state.app.tree.createSession(title=title, cwd=str(state.app.workspace))
-                        state.app.session_id = session_id
-                        state.app.history = state.app.tree.buildModelContext(session_id)
+                        state.select_session(session_id)
                         self._send_json(_state_payload(state.app), status=HTTPStatus.CREATED)
+                        return
+                self.send_error(HTTPStatus.NOT_FOUND)
+            except Exception as exc:
+                self._send_error(exc)
+
+        def do_PATCH(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            path = parsed.path
+            try:
+                payload = self._read_json()
+                node_route = _session_node_route(path)
+                if node_route and node_route[1] is None:
+                    with state.lock:
+                        state.workspace.update_session_node(node_route[0], payload)
+                        self._send_json(_workspace_payload(state))
+                        return
+                self.send_error(HTTPStatus.NOT_FOUND)
+            except Exception as exc:
+                self._send_error(exc)
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            path = parsed.path
+            try:
+                node_route = _session_node_route(path)
+                if node_route and node_route[1] is None:
+                    with state.lock:
+                        workspace = state.workspace.delete_session_node(node_route[0])
+                        state.select_session(str(workspace["activeSessionId"]))
+                        self._send_json(_workspace_payload(state))
                         return
                 self.send_error(HTTPStatus.NOT_FOUND)
             except Exception as exc:
@@ -189,6 +253,7 @@ def _handler_factory(state: WebState):
             if not message:
                 self._send_json({"error": "message is required"}, status=HTTPStatus.BAD_REQUEST)
                 return
+            session_id = str(payload.get("sessionId", "")).strip()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
@@ -200,6 +265,8 @@ def _handler_factory(state: WebState):
 
             try:
                 with state.lock:
+                    if session_id:
+                        state.select_session(session_id)
                     emit("user_message", {"text": message})
                     reply = state.app.ask(
                         message,
@@ -282,12 +349,47 @@ def _sessions_payload(app: AgentApp) -> dict[str, Any]:
     }
 
 
+def _workspace_payload(state: WebState) -> dict[str, Any]:
+    workspace = state.workspace.payload()
+    session_messages = {}
+    session_records = {}
+    for node in workspace.get("sessionNodes", []):
+        session_id = str(node.get("id", ""))
+        if not session_id:
+            continue
+        try:
+            records = load_session_records(session_id, state.root / "sessiontrees")
+        except FileNotFoundError:
+            records = []
+        session_records[session_id] = len(records)
+        session_messages[session_id] = [
+            step
+            for step in records_to_run_steps(records)
+            if step.get("kind") in {"user", "assistant"}
+        ]
+    memory = memory_payload(state.root / "memory")
+    workspace["sessionMessages"] = session_messages
+    workspace["sessionRecordCounts"] = session_records
+    workspace["treeMemoryItems"] = _tree_memory_items(memory.get("objects", []))
+    workspace["longTermKnowledgeItems"] = _knowledge_items(memory.get("objects", []))
+    return workspace
+
+
 def _session_resource_route(path: str) -> tuple[str, str, str | None] | None:
     parts = [unquote(part) for part in path.strip("/").split("/") if part]
     if len(parts) == 4 and parts[:2] == ["api", "sessions"]:
         return parts[2], parts[3], None
     if len(parts) == 5 and parts[:2] == ["api", "sessions"] and parts[3] == "node":
         return parts[2], "node", parts[4]
+    return None
+
+
+def _session_node_route(path: str) -> tuple[str, str | None] | None:
+    parts = [unquote(part) for part in path.strip("/").split("/") if part]
+    if len(parts) == 3 and parts[:2] == ["api", "session-nodes"]:
+        return parts[2], None
+    if len(parts) == 4 and parts[:2] == ["api", "session-nodes"]:
+        return parts[2], parts[3]
     return None
 
 
@@ -427,6 +529,46 @@ def _plain_data(value: Any) -> Any:
     if hasattr(value, "__dict__"):
         return _plain_data({key: item for key, item in vars(value).items() if not key.startswith("_")})
     return str(value)
+
+
+def _tree_memory_items(objects: list[Any]) -> list[dict[str, Any]]:
+    items = []
+    for item in objects:
+        if not isinstance(item, dict):
+            continue
+        uri = str(item.get("uri") or "")
+        context_type = str(item.get("context_type") or item.get("type") or "")
+        if uri.startswith("tree://") or "tree" in context_type:
+            items.append(
+                {
+                    "id": uri or str(item.get("id") or ""),
+                    "treeId": str(item.get("tree_id") or item.get("treeId") or ""),
+                    "sourceSessionId": str(item.get("source_session_id") or item.get("sourceSessionId") or ""),
+                    "type": str(item.get("memory_type") or item.get("type") or context_type or "finding"),
+                    "content": str(item.get("overview") or item.get("content") or item.get("title") or uri),
+                    "createdAt": str(item.get("created_at") or item.get("createdAt") or ""),
+                }
+            )
+    return items
+
+
+def _knowledge_items(objects: list[Any]) -> list[dict[str, Any]]:
+    items = []
+    for item in objects:
+        if not isinstance(item, dict):
+            continue
+        uri = str(item.get("uri") or "")
+        context_type = str(item.get("context_type") or item.get("type") or "")
+        if uri.startswith("mem://") or uri.startswith("wiki://") or "knowledge" in context_type:
+            items.append(
+                {
+                    "id": uri or str(item.get("id") or ""),
+                    "title": str(item.get("title") or uri or "Knowledge"),
+                    "content": str(item.get("overview") or item.get("content") or ""),
+                    "createdAt": str(item.get("created_at") or item.get("createdAt") or ""),
+                }
+            )
+    return items
 
 
 if __name__ == "__main__":
