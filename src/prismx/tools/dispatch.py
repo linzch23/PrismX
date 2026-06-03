@@ -3,13 +3,13 @@ from __future__ import annotations
 from threading import Lock
 from typing import Callable, TYPE_CHECKING
 
-from prismax.subagents import SubagentRegistry, SubagentSpec
+from prismx.subagents import SubagentRegistry, SubagentSpec
 
 from .base import Tool, object_schema
 from .registry import ToolRegistry
 
 if TYPE_CHECKING:
-    from prismax.runner import AgentRunner
+    from prismx.runner import AgentRunner
 
 
 class DispatchSubagentTool(Tool):

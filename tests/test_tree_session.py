@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from prismax.model_client import AgentMessage, TextBlock
-from prismax.tree_session import (
+from prismx.model_client import AgentMessage, TextBlock
+from prismx.tree_session import (
     BranchSummaryEntry,
     CompactionEntry,
     ContextLayer,

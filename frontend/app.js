@@ -3,7 +3,7 @@ const mockProjects = [
     id: "p1",
     name: "智能体开发大赛",
     trees: [
-      { id: "t1", name: "PrismaX 技术设计" },
+      { id: "t1", name: "PrismX 技术设计" },
       { id: "t2", name: "前端工作台设计" },
       { id: "t3", name: "TGM 记忆机制" },
     ],
@@ -17,7 +17,7 @@ const mockProjects = [
 
 const sessionTree = {
   id: "root",
-  name: "PrismaX 项目设计",
+  name: "PrismX 项目设计",
   status: "active",
   memoryCount: 7,
   children: [
@@ -62,7 +62,7 @@ const demoRun = {
       id: "m1",
       role: "user",
       time: "09:41",
-      text: "请把 PrismaX 的前端改造成类似 Codex App 的 Agent 工作台。",
+      text: "请把 PrismX 的前端改造成类似 Codex App 的 Agent 工作台。",
       tools: [],
     },
     {
@@ -75,7 +75,7 @@ const demoRun = {
           id: "tool-1",
           name: "search_context",
           status: "done",
-          input: { query: "PrismaX TGM frontend" },
+          input: { query: "PrismX TGM frontend" },
           output: "命中 Tree-Guided Memory、TreeSession、MemoryGraph 相关上下文。",
         },
         {
@@ -98,7 +98,7 @@ const demoRun = {
           name: "remember",
           status: "done",
           input: { category: "decisions", title: "TGM workspace direction" },
-          output: "Remembered: tree://prismax/frontend-workspace",
+          output: "Remembered: tree://prismx/frontend-workspace",
         },
       ],
     },
@@ -106,7 +106,7 @@ const demoRun = {
   tree: [],
   contextObjects: [
     {
-      uri: "tree://prismax/tgm/frontend",
+      uri: "tree://prismx/tgm/frontend",
       context_type: "tree-memory",
       title: "前端工作台设计",
       overview: "工作台主视图应同时呈现对话、会话树和记忆召回。",
@@ -205,7 +205,7 @@ function Header() {
     el("div", { class: "brand-block" }, [
       el("div", { class: "brand-mark", "aria-hidden": "true" }, "PX"),
       el("div", {}, [
-        el("strong", {}, "PrismaX"),
+        el("strong", {}, "PrismX"),
         el("span", {}, "Agent Runtime · MCP · Tree-Guided Memory"),
       ]),
     ]),
@@ -213,7 +213,7 @@ function Header() {
       el("span", { class: `status-badge ${state.apiMode ? "live" : ""}` }, statusText),
       button("Run Agent", "primary", () => focusComposer()),
       button("Settings", "ghost", () => showToast("Settings 入口预留中")),
-      el("div", { class: "avatar", title: "PrismaX user" }, "P"),
+      el("div", { class: "avatar", title: "PrismX user" }, "P"),
     ]),
   ]);
 }
@@ -236,7 +236,7 @@ function ProjectSidebar() {
   ]);
 }
 
-// ProjectTreeItem renders mock projects while real sessions are mapped into the active PrismaX project.
+// ProjectTreeItem renders mock projects while real sessions are mapped into the active PrismX project.
 function ProjectTreeItem(project) {
   const isActiveProject = project.id === state.activeProjectId;
   return el("section", { class: `project-item ${isActiveProject ? "active" : ""}` }, [
@@ -346,7 +346,7 @@ function CommandInput() {
       el("textarea", {
         id: "composer-input",
         rows: "3",
-        placeholder: "Tell PrismaX what to do in this Session node...",
+        placeholder: "Tell PrismX what to do in this Session node...",
         disabled: state.sending ? "disabled" : null,
       }),
       el("button", {
@@ -415,12 +415,12 @@ function MemoryWorkspace() {
     ]),
     el("div", { class: "memory-grid" }, [
       ContextCard("Active Path Context", [
-        "PrismaX 项目设计",
+        "PrismX 项目设计",
         "→ Tree-Guided Memory",
         "→ Tree Memory",
       ]),
       ContextCard("Tree Memory Recall", [
-        "- PrismaX 的主要创新是 TGM",
+        "- PrismX 的主要创新是 TGM",
         "- TreeSession 负责纵向上下文继承",
         "- Tree Memory 负责树内横向经验共享",
         "- Long-term Knowledge 负责跨项目知识复用",

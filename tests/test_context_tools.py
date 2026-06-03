@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir, make_contextfs_root
 
-from prismax.contextfs import ContextFS, ContextObject
-from prismax.memory_graph import MemoryGraph
-from prismax.tools.context import SearchContextTool, ReadContextTool, ListContextTool, ShowContextLinksTool
+from prismx.contextfs import ContextFS, ContextObject
+from prismx.memory_graph import MemoryGraph
+from prismx.tools.context import SearchContextTool, ReadContextTool, ListContextTool, ShowContextLinksTool
 
 
 class FakeMemoryStore:
@@ -75,7 +75,7 @@ class ContextToolsTests(unittest.TestCase):
 
 class RememberToolUpgradeTests(unittest.TestCase):
     def test_remember_with_note_only_still_works(self):
-        from prismax.tools.state import RememberTool
+        from prismx.tools.state import RememberTool
         calls = []
         class MemStore:
             def remember(self, note, category="events", title=None, scope="tree", memory_type=None):
@@ -89,7 +89,7 @@ class RememberToolUpgradeTests(unittest.TestCase):
         self.assertEqual(calls[0][3], "tree")
 
     def test_remember_with_category_and_title(self):
-        from prismax.tools.state import RememberTool
+        from prismx.tools.state import RememberTool
         calls = []
         class MemStore:
             def remember(self, note, category="events", title=None, scope="tree", memory_type=None):

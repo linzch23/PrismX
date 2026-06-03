@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir
 
-from prismax.memory_graph import MemoryGraph
+from prismx.memory_graph import MemoryGraph
 
 
 class MemoryGraphTests(unittest.TestCase):
@@ -75,7 +75,7 @@ class MemoryGraphTests(unittest.TestCase):
 
     def test_auto_link_creates_related_links_by_keyword_fallback(self):
         """auto_link with LLM failure falls back to keyword match."""
-        from prismax.contextfs import ContextFS, ContextObject
+        from prismx.contextfs import ContextFS, ContextObject
         from helpers import make_contextfs_root
 
         root = make_contextfs_root(self.tmp)

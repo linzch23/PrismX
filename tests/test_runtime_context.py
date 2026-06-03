@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir, make_contextfs_root, make_memory_object
 
-from prismax.context_backend import LocalContextBackend
-from prismax.contextfs import ContextFS, ContextObject
+from prismx.context_backend import LocalContextBackend
+from prismx.contextfs import ContextFS, ContextObject
 
 
 class FakeMemoryStore:
@@ -72,8 +72,8 @@ class RuntimeContextBuilderTests(unittest.TestCase):
                 status="active", tags=["test"], metadata={},
                 digest="x", created_at="", updated_at="",
             ), f"Content {i}")
-        from prismax.context_backend import LocalContextBackend
-        from prismax.context import RuntimeContextBuilder
+        from prismx.context_backend import LocalContextBackend
+        from prismx.context import RuntimeContextBuilder
         self.builder = RuntimeContextBuilder(
             LocalContextBackend(FakeMemoryStore(self.cfs)),
             limit=6, max_chars=3000,

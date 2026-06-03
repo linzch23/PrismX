@@ -1,6 +1,6 @@
-﻿# PrismaX Tree-Guided Memory 实现报告
+﻿# PrismX Tree-Guided Memory 实现报告
 
-本文说明 `PrismaX-refactor` 如何按 `TGM.md` 重构核心上下文与记忆架构。当前实现采用 TGM 主链路：旧的线性 `history.jsonl`、`MEMORY.md`、`compactions.md` 和 legacy compactor 已移除。
+本文说明 `PrismX-refactor` 如何按 `TGM.md` 重构核心上下文与记忆架构。当前实现采用 TGM 主链路：旧的线性 `history.jsonl`、`MEMORY.md`、`compactions.md` 和 legacy compactor 已移除。
 
 ## 1. 总体架构
 
@@ -19,13 +19,13 @@ TreeSession
 
 核心模块：
 
-- `src/prismax/tree_session.py`：树状会话、active leaf、active branch、分支跳转与压缩。
-- `src/prismax/tree_memory.py`：当前会话树内的短期共享经验。
-- `src/prismax/knowledge_compiler.py`：将稳定 Tree Memory 编译为长期知识操作。
-- `src/prismax/knowledge.py`：Wiki-style Knowledge Base 和本地语义索引。
-- `src/prismax/runtime_recall.py`：Active Path、Tree Memory、Long-term Knowledge 三层运行时召回。
-- `src/prismax/working_set.py`：最终注入 system prompt 的 Working Set。
-- `src/prismax/loop.py`：每轮 Agent 调用的 TGM 编排入口。
+- `src/prismx/tree_session.py`：树状会话、active leaf、active branch、分支跳转与压缩。
+- `src/prismx/tree_memory.py`：当前会话树内的短期共享经验。
+- `src/prismx/knowledge_compiler.py`：将稳定 Tree Memory 编译为长期知识操作。
+- `src/prismx/knowledge.py`：Wiki-style Knowledge Base 和本地语义索引。
+- `src/prismx/runtime_recall.py`：Active Path、Tree Memory、Long-term Knowledge 三层运行时召回。
+- `src/prismx/working_set.py`：最终注入 system prompt 的 Working Set。
+- `src/prismx/loop.py`：每轮 Agent 调用的 TGM 编排入口。
 
 ## 2. TreeSession 与 Active Path Context
 

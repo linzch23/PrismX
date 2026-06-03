@@ -1,4 +1,4 @@
-# PrismaX Coding Agent UI Spec
+# PrismX Coding Agent UI Spec
 
 ## Information Architecture
 

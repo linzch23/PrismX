@@ -4,11 +4,11 @@ import unittest
 
 from helpers import make_temp_dir
 
-from prismax.knowledge_compiler import KnowledgeCompiler
-from prismax.memory import MemoryStore
-from prismax.runtime_recall import TgmContextGateway, TgmRuntimeRecallBuilder
-from prismax.tree_memory import TreeMemoryStore
-from prismax.tree_session import TreeSessionManager
+from prismx.knowledge_compiler import KnowledgeCompiler
+from prismx.memory import MemoryStore
+from prismx.runtime_recall import TgmContextGateway, TgmRuntimeRecallBuilder
+from prismx.tree_memory import TreeMemoryStore
+from prismx.tree_session import TreeSessionManager
 
 
 class TreeMemoryTests(unittest.TestCase):
@@ -108,7 +108,7 @@ class KnowledgeCompilerTests(unittest.TestCase):
         store = TreeMemoryStore(tmp / "memory" / "tree")
         store.remember(
             "default",
-            "PrismaX 的 Runtime Recall 分为 Active Path、Tree Memory、Long-term Knowledge 三层。",
+            "PrismX 的 Runtime Recall 分为 Active Path、Tree Memory、Long-term Knowledge 三层。",
             title="TGM 三层召回",
             memory_type="decision",
             confidence=0.9,

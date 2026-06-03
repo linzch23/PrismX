@@ -5,10 +5,10 @@
 
 ```powershell
 
-cd "D:\agent架构比赛\PrismaX"
+cd "D:\agent架构比赛\PrismX"
 $env:PYTHONPATH="src"
 $env:MY_AGENT_WEB_PORT="8766"
-.\.venv\Scripts\python.exe -m prismax.server
+.\.venv\Scripts\python.exe -m prismx.server
 
 ```
 

@@ -27,7 +27,7 @@ HELP = """可用命令：
 def main() -> None:
     app = AgentApp()
     try:
-        print(f"prismax 已就绪。provider={app.provider} model={app.model} workspace={app.workspace}")
+        print(f"prismx 已就绪。provider={app.provider} model={app.model} workspace={app.workspace}")
         print("输入 /help 查看命令。\n")
 
         while True:

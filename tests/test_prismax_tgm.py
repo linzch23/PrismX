@@ -5,11 +5,11 @@ import unittest
 
 from helpers import make_temp_dir
 
-from prismax.context import RuntimeContextBuilder
-from prismax.context_backend import LocalContextBackend
-from prismax.contextfs import ContextFS, ContextObject
-from prismax.memory import MemoryStore
-from prismax.tree_session import (
+from prismx.context import RuntimeContextBuilder
+from prismx.context_backend import LocalContextBackend
+from prismx.contextfs import ContextFS, ContextObject
+from prismx.memory import MemoryStore
+from prismx.tree_session import (
     EVENT_BRANCH_JUMPED,
     EVENT_KNOWLEDGE_COMMITTED,
     EVENT_MESSAGE_APPENDED,
@@ -17,10 +17,10 @@ from prismax.tree_session import (
     FakeSummarizer,
     TreeSessionManager,
 )
-from prismax.working_set import WorkingSetBuilder
+from prismx.working_set import WorkingSetBuilder
 
 
-class PrismaXTGMEventTests(unittest.TestCase):
+class PrismXTGMEventTests(unittest.TestCase):
     def test_experience_events_replay_semantics(self):
         tmp = make_temp_dir()
         tree = TreeSessionManager(session_dir=tmp / "sessiontrees")
@@ -44,7 +44,7 @@ class PrismaXTGMEventTests(unittest.TestCase):
         self.assertIn(EVENT_KNOWLEDGE_COMMITTED, event_types)
 
 
-class PrismaXWorkingSetTests(unittest.TestCase):
+class PrismXWorkingSetTests(unittest.TestCase):
     def test_working_set_uses_active_branch_and_recent_tool_result(self):
         tmp = make_temp_dir()
         tree = TreeSessionManager(session_dir=tmp / "sessiontrees", compact_keep_messages=1)
@@ -76,7 +76,7 @@ class PrismaXWorkingSetTests(unittest.TestCase):
         self.assertIn(compaction_id, [item["id"] for item in ws.episode_summaries])
 
 
-class PrismaXKnowledgeTests(unittest.TestCase):
+class PrismXKnowledgeTests(unittest.TestCase):
     def test_compaction_commit_writes_wiki_and_semantic_index(self):
         tmp = make_temp_dir()
         store = MemoryStore(tmp / "memory")
@@ -89,9 +89,9 @@ class PrismaXKnowledgeTests(unittest.TestCase):
                     "category": "decisions",
                     "key": "tgm-runtime",
                     "title": "TGM Runtime",
-                    "abstract": "PrismaX uses Tree-Guided Memory.",
+                    "abstract": "PrismX uses Tree-Guided Memory.",
                     "overview": "Active branch context drives recall.",
-                    "content": "PrismaX compiles episode memory into wiki knowledge.",
+                    "content": "PrismX compiles episode memory into wiki knowledge.",
                     "trust_score": 0.9,
                     "tags": ["tgm"],
                 }
@@ -114,7 +114,7 @@ class PrismaXKnowledgeTests(unittest.TestCase):
         self.assertTrue(any(link["relation"] == "derived_from" for link in links))
 
 
-class PrismaXBranchSafeRecallTests(unittest.TestCase):
+class PrismXBranchSafeRecallTests(unittest.TestCase):
     def test_runtime_recall_prefers_current_branch_knowledge(self):
         tmp = make_temp_dir()
         cfs = ContextFS(tmp / "memory")
@@ -127,7 +127,7 @@ class PrismaXBranchSafeRecallTests(unittest.TestCase):
                     uri=uri,
                     context_type="memory",
                     title="TGM Decision",
-                    abstract="Use branch-safe recall for PrismaX.",
+                    abstract="Use branch-safe recall for PrismX.",
                     overview="Recall should avoid branch pollution.",
                     content_path=uri.replace("://", "/") + ".md",
                     source="test",

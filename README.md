@@ -1,11 +1,11 @@
-# prismax
+# prismx
 
-`prismax` 是一个本地运行的通用型 Python Agent，面向命令行工作流、工具调用、
+`prismx` 是一个本地运行的通用型 Python Agent，面向命令行工作流、工具调用、
 会话树管理、上下文压缩和多 Agent 协作场景。
 
 ## 上下文与记忆架构
 
-prismax 采用多层上下文与记忆系统：
+prismx 采用多层上下文与记忆系统：
 
 - **TreeSession（树形会话）** — 追加式 JSONL 会话树，支持分支、跳转、分叉和克隆。原始会话数据的唯一事实来源。
 - **ContextFS（上下文文件系统）** — 持久化上下文/记忆对象存储，分为 L0（摘要）、L1（概览）和 L2（完整正文）三层。对象以 URI 寻址。
@@ -77,13 +77,13 @@ MY_AGENT_COMPACT_KEEP_MESSAGES=8
 启动命令行 Agent：
 
 ```bash
-uv run prismax
+uv run prismx
 ```
 
 启动本地 Web 工作台：
 
 ```bash
-uv run prismax-web
+uv run prismx-web
 ```
 
 Web 工作台默认监听：
@@ -92,18 +92,18 @@ Web 工作台默认监听：
 http://127.0.0.1:8765
 ```
 
-如果 `uv run prismax-web` 没有识别到入口命令，可以改用模块方式启动。
+如果 `uv run prismx-web` 没有识别到入口命令，可以改用模块方式启动。
 
 macOS / Linux：
 
 ```bash
-PYTHONPATH=src uv run python -m prismax.server
+PYTHONPATH=src uv run python -m prismx.server
 ```
 
 Windows PowerShell：
 
 ```powershell
-$env:PYTHONPATH="src"; uv run python -m prismax.server
+$env:PYTHONPATH="src"; uv run python -m prismx.server
 ```
 
 仓库也提供了两个等价的脚本入口，适合希望固定项目根目录和解释器路径时使用：
@@ -124,7 +124,7 @@ context debug、工具、MCP 和 team 状态。会话仍然持久化在 `session
 
 ## MCP 工具
 
-`prismax` 可以连接外部 MCP server，并把远端工具暴露给 Agent 使用。配置文件位于项目根目录的
+`prismx` 可以连接外部 MCP server，并把远端工具暴露给 Agent 使用。配置文件位于项目根目录的
 `mcp_servers.json`。
 
 示例：
@@ -191,7 +191,7 @@ context debug、工具、MCP 和 team 状态。会话仍然持久化在 `session
 ## 项目结构
 
 ```text
-src/prismax/
+src/prismx/
   cli.py              CLI 入口
   server.py           本地 Web/API 入口
   loop.py             应用装配

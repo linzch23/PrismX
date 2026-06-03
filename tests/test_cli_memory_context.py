@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir
 
-from prismax.memory import MemoryStore
+from prismx.memory import MemoryStore
 
 
 class CLIOutputTests(unittest.TestCase):

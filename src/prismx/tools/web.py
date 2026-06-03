@@ -49,7 +49,7 @@ class WebFetchTool(Tool):
         )
 
     def execute(self, url: str, mode: str = "text", max_chars: int = 12000, **_: Any) -> str:
-        request = urllib.request.Request(url, headers={"User-Agent": "prismax/0.1"})
+        request = urllib.request.Request(url, headers={"User-Agent": "prismx/0.1"})
         with urllib.request.urlopen(request, timeout=15) as response:
             raw = response.read().decode("utf-8", errors="replace")
         if mode == "raw":

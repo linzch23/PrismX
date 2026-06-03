@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Append-only tree sessions for prismax.
+"""Append-only tree sessions for prismx.
 
 本模块实现 JSONL 作为事实来源的会话树：每个条目都有 `id` 和 `parentId`，
 当前上下文由 active leaf 所在分支构造，并支持标签、分支摘要、上下文压缩

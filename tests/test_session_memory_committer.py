@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir, make_fake_model_client
 
-from prismax.session_memory_committer import SessionMemoryCommitter, LlmMemoryExtractor
+from prismx.session_memory_committer import SessionMemoryCommitter, LlmMemoryExtractor
 
 
 class FakeTree:
