@@ -84,23 +84,26 @@ class TgmContextGateway:
             metadata=_tree_metadata_for_remember(category, memory_type, scope),
         )
         if scope == "long_term" or long_term_category:
+            source_memory_id = _tree_memory_id_from_uri(tree_uri)
             long_uri = self.memory_store.remember_note(
                 note,
                 category=long_term_category or category,
                 title=title,
+                source_tree_id=self.tree_id,
+                source_memory_id=source_memory_id,
             )
             return f"{tree_uri} + {long_uri}" if tree_uri and long_uri else tree_uri or long_uri
         return tree_uri
 
-    def search(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
+    def search(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
         tree_limit = max(1, limit // 2)
         long_limit = max(1, limit - tree_limit)
         return self.search_tree(query, limit=tree_limit) + self.search_long_term(query, limit=long_limit)
 
-    def search_tree(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
+    def search_tree(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
         return self.tree_memory.search(self.tree_id, query, limit=limit)
 
-    def search_long_term(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
+    def search_long_term(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
         return self.memory_store.search_memory(query, limit=limit)
 
     def read(self, uri: str, *, layer: str = "auto") -> str:
@@ -128,7 +131,7 @@ class TgmRuntimeRecallBuilder:
     knowledge visible and budgetable.
     """
 
-    def __init__(self, gateway: TgmContextGateway, *, limit: int = 6, max_chars: int = 12000) -> None:
+    def __init__(self, gateway: TgmContextGateway, *, limit: int = 5, max_chars: int = 12000) -> None:
         self.gateway = gateway
         self.limit = limit
         self.max_chars = max_chars
@@ -142,6 +145,7 @@ class TgmRuntimeRecallBuilder:
         recall_scope: dict[str, Any] | None = None,
     ) -> str:
         tree_results = self.gateway.search_tree(query, limit=self.limit)
+        self._promote_stable_tree_memory()
         long_results = self.gateway.search_long_term(query, limit=self.limit)
         long_results = self._rank_long_term(long_results, recall_scope or {})
         self.last_results = tree_results + long_results
@@ -190,6 +194,16 @@ class TgmRuntimeRecallBuilder:
             ranked.append((score, -index, item))
         ranked.sort(key=lambda pair: (-pair[0], pair[1]))
         return [item for _, _, item in ranked[: self.limit]]
+
+    def _promote_stable_tree_memory(self) -> None:
+        tree_memory = self.gateway.tree_memory
+        memory_store = self.gateway.memory_store
+        if not hasattr(tree_memory, "promotion_candidates") or not hasattr(memory_store, "promote_tree_memory"):
+            return
+        for item in tree_memory.promotion_candidates(self.gateway.tree_id):
+            uri = memory_store.promote_tree_memory(item)
+            if uri and hasattr(tree_memory, "mark_promoted"):
+                tree_memory.mark_promoted(self.gateway.tree_id, item.id)
 
 
 def _render_result(item: dict[str, Any], layer: str) -> str:
@@ -243,3 +257,7 @@ def _tree_metadata_for_remember(category: str, memory_type: str | None, scope: s
     if category in LONG_TERM_SPECIAL_MEMORY_TYPES or memory_type in LONG_TERM_SPECIAL_MEMORY_TYPES:
         metadata["long_term_special_type"] = memory_type or category
     return metadata
+
+
+def _tree_memory_id_from_uri(uri: str) -> str:
+    return uri.rstrip("/").rsplit("/", 1)[-1] if uri else ""

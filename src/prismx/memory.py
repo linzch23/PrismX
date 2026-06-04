@@ -1,43 +1,77 @@
 from __future__ import annotations
 
 import json
+import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .contextfs import ContextFS, ContextObject
-from .knowledge import KnowledgeObject, LocalSemanticVectorIndex, WikiKnowledgeBase
-from .memory_graph import MemoryGraph
-
 
 UTC8 = timezone(timedelta(hours=8))
+
+LONG_TERM_MEMORY_TYPES = {"user", "feedback", "project", "reference"}
+
+CATEGORY_TO_LONG_TERM_TYPE = {
+    "profile": "user",
+    "preferences": "feedback",
+    "entities": "user",
+    "events": "project",
+    "decisions": "project",
+    "constraints": "project",
+    "open_tasks": "project",
+    "cases": "project",
+    "patterns": "project",
+    "tools": "reference",
+    "skills": "reference",
+    "research": "reference",
+}
+
+
+@dataclass
+class LongTermMemory:
+    id: str
+    name: str
+    description: str
+    type: str
+    source_tree_id: str
+    source_memory_id: str
+    created_at: str
+    updated_at: str
+    confidence: float = 0.6
+    status: str = "active"
+    tags: list[str] | None = None
+    content: str = ""
+
+    @property
+    def uri(self) -> str:
+        return f"mem://{self.type}/{self.id}"
 
 
 class MemoryStore:
     def __init__(self, memory_dir: Path, user_file: Path | None = None) -> None:
         memory_dir = Path(memory_dir)
         if memory_dir.name == "memory":
-            # Deprecated constructor shape: callers used to pass root/memory.
-            # New long-term knowledge writes go to root/data/knowledge.
             memory_dir = memory_dir.parent / "data" / "knowledge"
         self.memory_dir = memory_dir
         self.memory_dir.mkdir(parents=True, exist_ok=True)
+
         self.user_file = user_file or self.memory_dir / "USER.md"
         if not self.user_file.exists():
             self.user_file.parent.mkdir(parents=True, exist_ok=True)
             self.user_file.write_text("# User Profile\n\n", encoding="utf-8")
 
-        # Memory OS: ContextFS + MemoryGraph
-        self._cfs = ContextFS(self.memory_dir)
-        self._graph = MemoryGraph(self.memory_dir / "context" / "links.jsonl")
-        self._wiki = WikiKnowledgeBase(self.memory_dir)
-        self._semantic_index = LocalSemanticVectorIndex(self.memory_dir)
+        self.memories_root = self.memory_dir / "memories"
+        for memory_type in LONG_TERM_MEMORY_TYPES:
+            (self.memories_root / memory_type).mkdir(parents=True, exist_ok=True)
+        self.memory_index_path = self.memory_dir / "MEMORY.md"
+
         self.last_committed_knowledge_uris: list[str] = []
-        self._auto_link_client = None  # set externally by AgentApp
+        self._auto_link_client = None
         self._auto_link_model = ""
+        self._write_memory_index()
 
     def set_auto_link_client(self, client: Any, model: str) -> None:
-        """Set the LLM client for MemoryGraph auto_link. Called by AgentApp."""
         self._auto_link_client = client
         self._auto_link_model = model
 
@@ -62,221 +96,258 @@ class MemoryStore:
         existing = path.read_text(encoding="utf-8") if path.exists() else f"# {path.stem} Episode Memory\n"
         path.write_text(existing.rstrip() + "\n\n" + content + "\n", encoding="utf-8")
 
-    def remember_note(self, note: str, category: str = "events", title: str | None = None) -> str:
-        import re
+    def remember_note(
+        self,
+        note: str,
+        category: str = "events",
+        title: str | None = None,
+        *,
+        source_tree_id: str = "",
+        source_memory_id: str = "",
+        confidence: float = 0.8,
+        tags: list[str] | None = None,
+    ) -> str:
         note = note.strip()
-        if not note:
+        if not note or not source_tree_id or not source_memory_id:
             return ""
-        title = title or (note[:60] + "..." if len(note) > 60 else note)
-        slug = re.sub(r"[^\w\s一-鿿-]", "", title.lower().strip())
-        slug = re.sub(r"\s+", "-", slug)[:80]
-        now = datetime.now(UTC8)
-        uri = _operation_to_uri(category, slug, now)
-
-        # 搜索同 category 的已有记忆，按 bigram 重叠判断是否需要更新
-        old_uri = None
-        prefix = _category_prefix(category)
-        existing = self._cfs.list_objects(prefix=prefix, limit=100)
-        best_overlap = 0
-        for e in existing:
-            if e.get("uri") == uri:
-                old_uri = uri
-                break
-            if e.get("status") != "active":
-                continue
-            e_title = e.get("title", "")
-            overlap = _count_bigram_overlap(title.lower(), e_title.lower())
-            if overlap > best_overlap:
-                best_overlap = overlap
-                old_uri = e.get("uri")
-
-        # 如果有相似的旧记忆（bigram 重叠 ≥2），标记为 archived
-        if old_uri and old_uri != uri and best_overlap >= 2:
-            try:
-                old_entry = self._cfs.read_object(old_uri, layer="auto")
-                old_obj = ContextObject(
-                    uri=old_uri, context_type="memory",
-                    title=old_entry.get("title", ""),
-                    abstract=old_entry.get("abstract", ""),
-                    overview=old_entry.get("overview", ""),
-                    content_path=old_entry.get("content_path", ""),
-                    source=old_entry.get("source", "manual"),
-                    trust_score=old_entry.get("trust_score", 0.5),
-                    sensitivity=old_entry.get("sensitivity", "public"),
-                    status="archived",
-                    tags=old_entry.get("tags", []),
-                    metadata={**old_entry.get("metadata", {}), "superseded_by": uri},
-                    digest="",
-                    created_at=old_entry.get("created_at", ""),
-                    updated_at=now.isoformat(),
-                )
-                old_content = self._cfs.read_object(old_uri, layer="full")
-                self._cfs.write_object(old_obj, old_content.get("content", ""))
-            except Exception:
-                pass
-
-        content_rel = uri.replace("://", "/") + ".md"
-        obj = ContextObject(
-            uri=uri, context_type="memory", title=title,
-            abstract=note[:200], overview=note,
-            content_path=content_rel,
-            source="manual", trust_score=0.8, sensitivity="public",
-            status="active", tags=[category],
-            metadata={"written_by": "remember_tool"}, digest="",
-            created_at=now.isoformat(), updated_at="",
+        memory_type = CATEGORY_TO_LONG_TERM_TYPE.get(category, "project")
+        now = datetime.now(UTC8).isoformat()
+        memory = LongTermMemory(
+            id=_slugify(f"{source_tree_id}-{source_memory_id}"),
+            name=title or (note[:60] + "..." if len(note) > 60 else note),
+            description=note[:200],
+            type=memory_type,
+            source_tree_id=source_tree_id,
+            source_memory_id=source_memory_id,
+            created_at=now,
+            updated_at=now,
+            confidence=float(confidence),
+            status="active",
+            tags=tags or [category],
+            content=note,
         )
-        self._cfs.write_object(obj, note)
-        self._cfs.append_diff({"action": "remember", "uri": uri, "reason": "manual remember"})
-        if old_uri and old_uri != uri:
-            self._graph.add_link(uri, old_uri, "updates", 0.9,
-                                 f"bigram_overlap={best_overlap}")
-        if self._auto_link_client:
-            self._graph.auto_link(uri, self._cfs, self._auto_link_client, self._auto_link_model)
-        return uri
+        return self._write_long_term_memory(memory)
+
+    def promote_tree_memory(self, item: Any, *, memory_type: str | None = None) -> str:
+        source_tree_id = str(getattr(item, "tree_id", ""))
+        source_memory_id = str(getattr(item, "id", ""))
+        if not source_tree_id or not source_memory_id:
+            return ""
+        target_type = memory_type or _long_term_type_for_tree_memory(item)
+        if target_type not in LONG_TERM_MEMORY_TYPES:
+            target_type = "project"
+        now = datetime.now(UTC8).isoformat()
+        memory = LongTermMemory(
+            id=_slugify(f"{source_tree_id}-{source_memory_id}"),
+            name=str(getattr(item, "title", "") or getattr(item, "content", "")[:60] or source_memory_id),
+            description=str(getattr(item, "content", ""))[:200],
+            type=target_type,
+            source_tree_id=source_tree_id,
+            source_memory_id=source_memory_id,
+            created_at=now,
+            updated_at=now,
+            confidence=float(getattr(item, "confidence", 0.6)),
+            status="active",
+            tags=list(getattr(item, "tags", []) or []) + [str(getattr(item, "memory_type", "finding"))],
+            content=str(getattr(item, "content", "")),
+        )
+        return self._write_long_term_memory(memory)
 
     def commit_session_archive(
         self, session_uri: str, summary: str, operations: list[dict[str, Any]], metadata: dict[str, Any]
     ) -> str:
-        import json
-        now = datetime.now(UTC8)
-        date_part = now.strftime("%Y/%m/%d")
-        slug = session_uri.split("/")[-1]
         self.last_committed_knowledge_uris = []
-
-        # write session archive
-        archive_obj = ContextObject(
-            uri=session_uri, context_type="session", title=f"Session Archive {slug}",
-            abstract=summary[:200], overview=summary,
-            content_path=f"sessiontrees/archives/{date_part}/{slug}.md",
-            source="compaction", trust_score=0.7, sensitivity="internal",
-            status="archived", tags=["session-archive"],
-            metadata=metadata, digest="",
-            created_at=now.isoformat(), updated_at="",
-        )
-        archive_content = _build_archive_content(summary, metadata)
-        self._cfs.write_object(archive_obj, archive_content)
-
-        # process operations
-        valid_categories = {"profile", "preferences", "entities", "events",
-                            "decisions", "constraints", "open_tasks",
-                            "cases", "patterns", "tools", "skills", "research"}
         for op in operations:
-            action = op.get("action", "")
-            category = op.get("category", "")
-            key = op.get("key", "")
-            if action not in ("upsert", "append", "quarantine"):
-                _write_quarantine(self._cfs, op, f"Invalid action: {action}")
-                self._cfs.append_diff({"action": "quarantine", "reason": f"invalid action: {action}", "operation": op})
+            if op.get("action") not in {"upsert", "append"}:
                 continue
-            if category not in valid_categories:
-                _write_quarantine(self._cfs, op, f"Invalid category: {category}")
-                self._cfs.append_diff({"action": "quarantine", "reason": f"invalid category: {category}", "operation": op})
+            source_tree_id = str(op.get("source_tree_id") or "")
+            source_memory_id = str(op.get("source_memory_id") or "")
+            memory_type = str(op.get("type") or op.get("long_term_type") or "project")
+            if memory_type not in LONG_TERM_MEMORY_TYPES or not source_tree_id or not source_memory_id:
                 continue
-
-            if action == "quarantine":
-                _write_quarantine(self._cfs, op, op.get("reason", "manual quarantine"))
-                continue
-
-            uri = _operation_to_uri(category, key, now)
-            mem_obj = ContextObject(
-                uri=uri, context_type="memory",
-                title=op.get("title", key),
-                abstract=op.get("abstract", ""),
-                overview=op.get("overview", ""),
-                content_path=f"mem/{category}/{key}.md",
-                source="compaction", trust_score=float(op.get("trust_score", 0.6)),
-                sensitivity="public", status="active",
-                tags=op.get("tags", []) + [category],
-                metadata={"source_session": session_uri, "reason": op.get("reason", "")},
-                digest="", created_at=now.isoformat(), updated_at="",
+            now = datetime.now(UTC8).isoformat()
+            memory = LongTermMemory(
+                id=_slugify(f"{source_tree_id}-{source_memory_id}"),
+                name=str(op.get("title") or op.get("name") or op.get("key") or source_memory_id),
+                description=str(op.get("abstract") or op.get("overview") or "")[:200],
+                type=memory_type,
+                source_tree_id=source_tree_id,
+                source_memory_id=source_memory_id,
+                created_at=now,
+                updated_at=now,
+                confidence=float(op.get("trust_score") or op.get("confidence") or 0.6),
+                status="active",
+                tags=list(op.get("tags") or []),
+                content=str(op.get("content") or op.get("overview") or ""),
             )
-            self._cfs.write_object(mem_obj, op.get("content", op.get("overview", "")))
-            knowledge = KnowledgeObject(
-                title=op.get("title", key),
-                summary=op.get("abstract") or op.get("overview", ""),
-                content=op.get("content", op.get("overview", "")),
-                source_session=metadata.get("session_id", session_uri),
-                source_branch=(metadata.get("debug") or {}).get("activeLeafId", ""),
-                source_compaction=metadata.get("compaction_id", ""),
-                trust_score=float(op.get("trust_score", 0.6)),
-                tags=op.get("tags", []) + [category],
-                updated_at=now.isoformat(),
-                knowledge_type=_knowledge_type_for_category(category),
-                uri=uri,
-            )
-            wiki_path = self._wiki.write(knowledge, category=category, key=key)
-            self._semantic_index.upsert(knowledge, path=wiki_path)
-            self.last_committed_knowledge_uris.append(uri)
-
-            # derived_from link
-            self._graph.add_link(uri, session_uri, "derived_from", 0.95,
-                                 f"extracted from {session_uri}")
-
-            # explicit links from operations
-            for link in op.get("links", []):
-                self._graph.add_link(uri, link["target_uri"], link["relation"],
-                                     link.get("confidence", 0.5), link.get("reason", ""))
-
-            # auto_link
-            if self._auto_link_client:
-                self._graph.auto_link(uri, self._cfs, self._auto_link_client, self._auto_link_model)
-
-            self._cfs.append_diff({"action": action, "uri": uri, "category": category,
-                                   "reason": op.get("reason", ""), "session_uri": session_uri})
-
+            uri = self._write_long_term_memory(memory)
+            if uri:
+                self.last_committed_knowledge_uris.append(uri)
         return session_uri
 
-    def search_memory(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
-        results = self._cfs.search_objects(query, limit=limit)
-        seen = {item.get("uri") for item in results}
-        for item in self._semantic_index.search(query, limit=limit):
-            if item.get("uri") not in seen:
-                results.append(item)
-                seen.add(item.get("uri"))
-            if len(results) >= limit:
-                break
-        return results[:limit]
+    def search_memory(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        selected = self._search_long_term(query, limit=limit)
+        if selected:
+            return selected
+        return self._legacy_search(query, limit=limit)
 
     def read_context(self, uri: str, layer: str = "auto") -> str:
-        try:
-            result = self._cfs.read_object(uri, layer=layer)
-            return result.get("content", "")
-        except KeyError:
-            return f"Error: URI not found: {uri}"
+        memory = self._memory_by_uri(uri)
+        if memory is not None:
+            if layer in {"l0", "metadata"}:
+                return memory.description
+            return memory.content
+        return f"Error: URI not found: {uri}"
 
     def list_context(self, prefix: str = "mem://", limit: int = 50) -> list[dict[str, Any]]:
-        return self._cfs.list_objects(prefix=prefix, limit=limit)
+        items = [self._to_context_result(memory) for memory in self._load_long_term_memories()]
+        if prefix:
+            items = [item for item in items if str(item.get("uri", "")).startswith(prefix)]
+        if items:
+            return items[:limit]
+        return []
 
     def graph_neighbors(self, uri: str, limit: int = 5) -> list[dict[str, Any]]:
-        return self._graph.neighbors(uri, limit=limit)
+        return []
 
     def render_memory(self) -> str:
-        lines = ["# Memory OS（结构化长期记忆）"]
-        categories = {
-            "profile": "mem://user/profile",
-            "preferences": "mem://user/preferences/",
-            "entities": "mem://user/entities/",
-            "events": "mem://user/events/",
-            "decisions": "mem://project/decisions/",
-            "constraints": "mem://project/constraints/",
-            "open_tasks": "mem://project/open_tasks/",
-            "cases": "mem://agent/cases/",
-            "patterns": "mem://agent/patterns/",
-            "tools": "mem://agent/tools/",
-            "skills": "mem://agent/skills/",
-        }
-        has_items = False
-        for name, prefix in categories.items():
-            items = self._cfs.list_objects(prefix=prefix, limit=20)
-            if items:
-                has_items = True
-                lines.append(f"\n## {name.title()}")
-                for item in items:
-                    lines.append(f"- [{item.get('title', '?')}]({item.get('uri', '')}) "
-                                 f"trust={item.get('trust_score', 0):.1f}")
-        if not has_items:
-            lines.append("\n(暂无结构化记忆，通过对话中的 remember 或 /compact 来创建)")
+        lines = ["# Long-term Memory"]
+        for memory_type in ["user", "feedback", "project", "reference"]:
+            lines.append(f"\n## {memory_type}")
+            items = [item for item in self._load_long_term_memories() if item.type == memory_type]
+            if not items:
+                lines.append("- (none)")
+                continue
+            for item in items:
+                lines.append(f"- [{item.name}]({item.uri}) trust={item.confidence:.1f}")
         return "\n".join(lines)
+
+    def _write_long_term_memory(self, memory: LongTermMemory) -> str:
+        if memory.type not in LONG_TERM_MEMORY_TYPES or not memory.source_tree_id or not memory.source_memory_id:
+            return ""
+        path = self._memory_path(memory.type, memory.id)
+        existing = self._read_long_term_memory(path)
+        if existing is not None:
+            memory.created_at = existing.created_at
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_render_long_term_markdown(memory), encoding="utf-8")
+        self._write_memory_index()
+        return memory.uri
+
+    def _search_long_term(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+        tokens = _tokens(query)
+        scored: list[tuple[float, LongTermMemory]] = []
+        for memory in self._load_long_term_memories():
+            if memory.status != "active":
+                continue
+            haystacks = {
+                "name": memory.name.lower(),
+                "description": memory.description.lower(),
+                "type": memory.type.lower(),
+                "tags": " ".join(memory.tags or []).lower(),
+            }
+            score = 0.0
+            for token in tokens:
+                if token in haystacks["name"]:
+                    score += 5
+                if token in haystacks["description"]:
+                    score += 3
+                if token in haystacks["type"]:
+                    score += 2
+                if token in haystacks["tags"]:
+                    score += 2
+            if score > 0:
+                scored.append((score + memory.confidence, memory))
+        scored.sort(key=lambda pair: (-pair[0], pair[1].updated_at))
+        return [self._to_context_result(memory, include_content=True) for _, memory in scored[:limit]]
+
+    def _legacy_search(self, query: str, *, limit: int) -> list[dict[str, Any]]:
+        return []
+
+    def _load_long_term_memories(self) -> list[LongTermMemory]:
+        memories = []
+        for memory_type in sorted(LONG_TERM_MEMORY_TYPES):
+            for path in sorted((self.memories_root / memory_type).glob("*.md")):
+                memory = self._read_long_term_memory(path)
+                if memory is not None:
+                    memories.append(memory)
+        return sorted(memories, key=lambda item: item.updated_at, reverse=True)
+
+    def _read_long_term_memory(self, path: Path) -> LongTermMemory | None:
+        if not path.exists():
+            return None
+        text = path.read_text(encoding="utf-8")
+        frontmatter, content = _split_frontmatter(text)
+        if not frontmatter:
+            return None
+        data = _parse_simple_yaml(frontmatter)
+        try:
+            return LongTermMemory(
+                id=str(data["id"]),
+                name=str(data.get("name") or data["id"]),
+                description=str(data.get("description") or ""),
+                type=str(data["type"]),
+                source_tree_id=str(data["source_tree_id"]),
+                source_memory_id=str(data["source_memory_id"]),
+                created_at=str(data.get("created_at") or ""),
+                updated_at=str(data.get("updated_at") or ""),
+                confidence=float(data.get("confidence") or 0.6),
+                status=str(data.get("status") or "active"),
+                tags=_coerce_tags(data.get("tags")),
+                content=content.strip(),
+            )
+        except KeyError:
+            return None
+
+    def _memory_by_uri(self, uri: str) -> LongTermMemory | None:
+        parts = uri.removeprefix("mem://").split("/", 1)
+        if len(parts) != 2:
+            return None
+        memory_type, memory_id = parts
+        if memory_type not in LONG_TERM_MEMORY_TYPES:
+            return None
+        return self._read_long_term_memory(self._memory_path(memory_type, memory_id))
+
+    def _memory_path(self, memory_type: str, memory_id: str) -> Path:
+        return self.memories_root / memory_type / f"{_slugify(memory_id)}.md"
+
+    def _to_context_result(self, memory: LongTermMemory, *, include_content: bool = True) -> dict[str, Any]:
+        return {
+            "uri": memory.uri,
+            "context_type": "knowledge",
+            "title": memory.name,
+            "abstract": memory.description,
+            "overview": memory.content if include_content else memory.description,
+            "trust_score": memory.confidence,
+            "status": memory.status,
+            "sensitivity": "public",
+            "updated_at": memory.updated_at,
+            "tags": memory.tags or [],
+            "metadata": {
+                "type": memory.type,
+                "source_tree_id": memory.source_tree_id,
+                "source_memory_id": memory.source_memory_id,
+                "confidence": memory.confidence,
+                "status": memory.status,
+            },
+        }
+
+    def _write_memory_index(self) -> None:
+        lines = ["# Long-term Memory Index", ""]
+        memories: list[LongTermMemory] = []
+        if self.memories_root.exists():
+            memories = [item for item in self._load_long_term_memories() if item.status == "active"]
+        for memory_type in ["user", "feedback", "project", "reference"]:
+            lines.append(f"## {memory_type}")
+            bucket = [item for item in memories if item.type == memory_type]
+            if bucket:
+                for item in bucket:
+                    lines.append(f"- {item.name} - {item.description} ({item.type})")
+            else:
+                lines.append("- (none)")
+            lines.append("")
+        self.memory_index_path.parent.mkdir(parents=True, exist_ok=True)
+        self.memory_index_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 class TokenLog:
@@ -335,89 +406,76 @@ class TokenLog:
         return stats
 
 
-def _slugify(text: str) -> str:
-    import re
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s一-鿿-]", "", text)
-    text = re.sub(r"\s+", "-", text)
-    return text[:80] if len(text) > 80 else text
-
-
-def _operation_to_uri(category: str, key: str, now: Any) -> str:
-    date_part = now.strftime("%Y/%m/%d")
-    slug = _slugify(key)
-    if category in ("profile",):
-        return "mem://user/profile"
-    if category in ("preferences", "entities"):
-        return f"mem://user/{category}/{slug}"
-    if category in ("events",):
-        return f"mem://user/{category}/{date_part}/{slug}"
-    if category in ("decisions", "constraints", "open_tasks"):
-        return f"mem://project/{category}/{slug}"
-    if category in ("cases", "patterns", "tools", "skills"):
-        return f"mem://agent/{category}/{slug}"
-    return f"mem://user/events/{date_part}/{slug}"
-
-
-def _category_prefix(category: str) -> str:
-    """Return the URI prefix for a given memory category."""
-    if category in ("profile",):
-        return "mem://user/profile"
-    if category in ("preferences", "entities", "events"):
-        return f"mem://user/{category}/"
-    if category in ("decisions", "constraints", "open_tasks"):
-        return f"mem://project/{category}/"
-    if category in ("cases", "patterns", "tools", "skills"):
-        return f"mem://agent/{category}/"
-    return f"mem://user/events/"
-
-
-def _knowledge_type_for_category(category: str) -> str:
-    if category in {"profile", "preferences", "entities", "events"}:
+def _long_term_type_for_tree_memory(item: Any) -> str:
+    metadata = getattr(item, "metadata", {}) or {}
+    special = metadata.get("long_term_special_type")
+    if special == "user_profile":
         return "user"
-    if category in {"cases", "patterns"}:
-        return "pattern"
-    if category in {"tools", "skills"}:
-        return "architecture"
-    if category == "research":
-        return "research"
+    if special == "user_feedback":
+        return "feedback"
+    if special == "reference":
+        return "reference"
     return "project"
 
 
-def _count_bigram_overlap(title_a: str, title_b: str) -> int:
-    """Count overlapping character bigrams between two titles."""
-    a_bigrams = {title_a[i:i + 2] for i in range(len(title_a) - 1)} if len(title_a) >= 2 else set()
-    b_bigrams = {title_b[i:i + 2] for i in range(len(title_b) - 1)} if len(title_b) >= 2 else set()
-    return len(a_bigrams & b_bigrams)
+def _render_long_term_markdown(memory: LongTermMemory) -> str:
+    frontmatter = {
+        "id": memory.id,
+        "name": memory.name,
+        "description": memory.description,
+        "type": memory.type,
+        "source_tree_id": memory.source_tree_id,
+        "source_memory_id": memory.source_memory_id,
+        "created_at": memory.created_at,
+        "updated_at": memory.updated_at,
+        "confidence": memory.confidence,
+        "status": memory.status,
+        "tags": ",".join(memory.tags or []),
+    }
+    lines = ["---"]
+    lines.extend(f"{key}: {value}" for key, value in frontmatter.items())
+    lines.extend(["---", "", memory.content.strip(), ""])
+    return "\n".join(lines)
 
 
-def _write_quarantine(cfs: Any, op: dict[str, Any], reason: str) -> None:
-    import json
-    key = op.get("key", "unknown")
-    slug = _slugify(f"{key}-{reason[:20]}")
-    obj = ContextObject(
-        uri=f"mem://quarantine/{slug}", context_type="memory",
-        title=op.get("title", key), abstract=reason,
-        overview=str(op), content_path=f"mem/quarantine/{slug}.md",
-        source="compaction", trust_score=0.1, sensitivity="internal",
-        status="quarantine", tags=["quarantine"],
-        metadata={"original_operation": op}, digest="",
-        created_at="", updated_at="",
-    )
-    cfs.write_object(obj, json.dumps(op, ensure_ascii=False, indent=2))
+def _split_frontmatter(text: str) -> tuple[str, str]:
+    if not text.startswith("---\n"):
+        return "", text
+    end = text.find("\n---", 4)
+    if end < 0:
+        return "", text
+    return text[4:end].strip(), text[end + 4 :].strip()
 
 
-def _build_archive_content(summary: str, metadata: dict[str, Any]) -> str:
-    import json
-    parts = [
-        "# Session Archive",
-        "",
-        "## Compaction Summary",
-        summary,
-        "",
-        "## Metadata",
-        "```json",
-        json.dumps(metadata, ensure_ascii=False, indent=2),
-        "```",
-    ]
-    return "\n".join(parts)
+def _parse_simple_yaml(text: str) -> dict[str, str]:
+    data = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        data[key.strip()] = value.strip()
+    return data
+
+
+def _coerce_tags(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return []
+
+
+def _slugify(text: str) -> str:
+    text = str(text).lower().strip()
+    text = re.sub(r"[^\w\s\u4e00-\u9fff-]", "", text)
+    text = re.sub(r"\s+", "-", text)
+    return text[:80] or "memory"
+
+
+def _tokens(text: str) -> set[str]:
+    raw = re.findall(r"[\w\u4e00-\u9fff]+", text.lower())
+    tokens = set(raw)
+    for token in raw:
+        if len(token) > 3 and any("\u4e00" <= ch <= "\u9fff" for ch in token):
+            tokens.update(token[i : i + 2] for i in range(len(token) - 1))
+    return tokens

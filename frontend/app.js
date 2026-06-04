@@ -418,7 +418,7 @@ function MemoryWorkspace() {
         `${index + 1}. ${session.title} / ${getMessagesForSession(session.id).length} messages`
       )),
       ContextCard("Tree Memory Recall", memoryItems.length ? memoryItems.map(renderMemoryLine) : ["No tree memory items for this tree yet."]),
-      ContextCard("Long-term Knowledge Recall", knowledge.map((item) => item.content || item.title)),
+      ContextCard("Long-term Knowledge Recall", knowledge.map(renderKnowledgeLine)),
       ContextCard("Working Context Preview", [
         `Active Path Sessions: ${stats.activePathSessions}`,
         `Active Path Messages: ${stats.activePathMessages}`,
@@ -1302,7 +1302,25 @@ function collectDescendantIds(sessionId) {
 }
 
 function renderMemoryLine(item) {
-  return `${item.type || "finding"} / ${item.sourceSessionId || "tree"} / ${item.content}`;
+  const meta = [
+    item.type || "finding",
+    `reuse ${item.reuseCount ?? 0}`,
+    `confidence ${Number(item.confidence || 0).toFixed(2)}`,
+    item.status || "active",
+    item.promoted ? "promoted" : "",
+  ].filter(Boolean).join(" / ");
+  return `${meta} / ${item.content}`;
+}
+
+function renderKnowledgeLine(item) {
+  const meta = [
+    item.type || "knowledge",
+    item.sourceTreeId ? `tree ${item.sourceTreeId}` : "",
+    item.sourceMemoryId ? `memory ${item.sourceMemoryId}` : "",
+    `confidence ${Number(item.confidence || 0).toFixed(2)}`,
+    item.status || "active",
+  ].filter(Boolean).join(" / ");
+  return `${meta} / ${item.content || item.title}`;
 }
 
 function infoPill(label, value) {

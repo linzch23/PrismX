@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
+
 from helpers import make_temp_dir
 
 from prismx.memory import MemoryStore
@@ -26,29 +26,41 @@ class MemoryOSCoreTests(unittest.TestCase):
 class MemoryOSNewAPITests(unittest.TestCase):
     def setUp(self):
         self.tmp = make_temp_dir()
-        self.mem_dir = self.tmp / "memory"
-        self.store = MemoryStore(self.mem_dir)
+        self.store = MemoryStore(self.tmp / "memory")
 
-    def test_remember_note_creates_structured_memory_object(self):
+    def test_remember_note_requires_tree_memory_source(self):
         uri = self.store.remember_note("User prefers tabs over spaces", category="preferences", title="Tab Preference")
-        self.assertTrue(uri.startswith("mem://"), f"Expected mem:// URI, got {uri}")
+        self.assertEqual(uri, "")
+        self.assertEqual(self.store.search_memory("tabs", limit=5), [])
+
+    def test_remember_note_creates_traceable_tgm_2_memory(self):
+        uri = self.store.remember_note(
+            "User prefers tabs over spaces",
+            category="preferences",
+            title="Tab Preference",
+            source_tree_id="tree-a",
+            source_memory_id="mem-a",
+        )
+
+        self.assertTrue(uri.startswith("mem://feedback/"), f"Expected feedback URI, got {uri}")
+        self.assertTrue((self.tmp / "data" / "knowledge" / "MEMORY.md").exists())
+        self.assertTrue((self.tmp / "data" / "knowledge" / "memories" / "feedback").exists())
         result = self.store.read_context(uri, layer="auto")
         self.assertIn("tabs over spaces", result)
 
-    def test_remember_note_does_not_write_legacy_memory(self):
-        self.store.remember_note("Important project fact", category="events")
-        self.assertFalse((self.mem_dir / "MEMORY.md").exists())
-
-    def test_commit_session_archive_writes_archive_and_memory_objects(self):
+    def test_commit_session_archive_writes_traceable_memory_objects(self):
         ops = [{
-            "action": "upsert", "category": "decisions",
-            "key": "use-sqlite", "title": "Use SQLite",
+            "action": "upsert",
+            "type": "project",
+            "source_tree_id": "tree-a",
+            "source_memory_id": "mem-a",
+            "key": "use-sqlite",
+            "title": "Use SQLite",
             "abstract": "Decided to use SQLite for storage.",
             "overview": "Team decided to use SQLite for local storage needs.",
             "content": "Full decision record: use SQLite as embedded DB.",
-            "reason": "Architecture decision captured from session.",
-            "trust_score": 0.8, "tags": ["architecture"],
-            "links": [],
+            "trust_score": 0.8,
+            "tags": ["architecture"],
         }]
         archive_uri = self.store.commit_session_archive(
             session_uri="ctx://sessiontrees/archives/2026/05/24/s1-c1",
@@ -61,19 +73,18 @@ class MemoryOSNewAPITests(unittest.TestCase):
         mem_results = self.store.search_memory("SQLite", limit=5)
         self.assertEqual(len(mem_results), 1)
         self.assertEqual(mem_results[0]["title"], "Use SQLite")
+        self.assertEqual(mem_results[0]["metadata"]["source_tree_id"], "tree-a")
 
-    def test_invalid_operation_goes_to_quarantine(self):
-        ops = [{"action": "invalid_action", "category": "events", "key": "bad"}]
+    def test_invalid_or_untraceable_operation_is_ignored(self):
+        ops = [{"action": "upsert", "type": "project", "key": "bad"}]
         self.store.commit_session_archive(
             session_uri="ctx://sessiontrees/archives/2026/05/24/s2-c1",
             summary="Test.",
             operations=ops,
             metadata={},
         )
-        results = self.store.list_context(prefix="mem://quarantine/", limit=10)
-        self.assertGreaterEqual(len(results), 1)
+        self.assertEqual(self.store.list_context(prefix="mem://", limit=10), [])
 
-    def test_no_current_messages_jsonl_created(self):
-        current = self.mem_dir / "context" / "sessiontrees" / "current"
+    def test_no_old_contextfs_current_messages_jsonl_created(self):
+        current = self.tmp / "data" / "knowledge" / "context" / "sessiontrees" / "current"
         self.assertFalse(current.exists(), "sessiontrees/current/messages.jsonl must not exist")
-

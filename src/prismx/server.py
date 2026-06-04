@@ -687,6 +687,10 @@ def _tree_memory_items(objects: list[Any]) -> list[dict[str, Any]]:
                     ),
                     "type": str(item.get("memory_type") or metadata.get("memory_type") or item.get("type") or context_type or "finding"),
                     "content": str(item.get("overview") or item.get("content") or item.get("title") or uri),
+                    "reuseCount": int(metadata.get("reuse_count") or item.get("reuse_count") or 0),
+                    "confidence": float(metadata.get("confidence") or item.get("trust_score") or item.get("confidence") or 0.0),
+                    "status": str(metadata.get("status") or item.get("status") or "active"),
+                    "promoted": bool(metadata.get("promoted") or item.get("promoted") or False),
                     "createdAt": str(item.get("created_at") or item.get("createdAt") or ""),
                 }
             )
@@ -701,11 +705,17 @@ def _knowledge_items(objects: list[Any]) -> list[dict[str, Any]]:
         uri = str(item.get("uri") or "")
         context_type = str(item.get("context_type") or item.get("type") or "")
         if uri.startswith("mem://") or uri.startswith("wiki://") or "knowledge" in context_type:
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
             items.append(
                 {
                     "id": uri or str(item.get("id") or ""),
                     "title": str(item.get("title") or uri or "Knowledge"),
                     "content": str(item.get("overview") or item.get("content") or ""),
+                    "type": str(metadata.get("type") or metadata.get("knowledge_type") or item.get("type") or ""),
+                    "sourceTreeId": str(metadata.get("source_tree_id") or ""),
+                    "sourceMemoryId": str(metadata.get("source_memory_id") or ""),
+                    "confidence": float(metadata.get("confidence") or item.get("trust_score") or 0.0),
+                    "status": str(metadata.get("status") or item.get("status") or "active"),
                     "createdAt": str(item.get("created_at") or item.get("createdAt") or ""),
                 }
             )

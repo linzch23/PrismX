@@ -77,7 +77,7 @@ class CliCommandTests(unittest.TestCase):
         self.assertIn("Tree Memory added", output)
         self.assertIn("Long-term Knowledge added", output)
         self.assertIn("123123", memory_output)
-        self.assertIn("mem://user/profile", knowledge_output)
+        self.assertIn("mem://user/", knowledge_output)
 
 
 if __name__ == "__main__":

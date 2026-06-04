@@ -77,7 +77,7 @@ class PrismXWorkingSetTests(unittest.TestCase):
 
 
 class PrismXKnowledgeTests(unittest.TestCase):
-    def test_compaction_commit_writes_wiki_and_semantic_index(self):
+    def test_compaction_commit_writes_tgm_2_memory_files(self):
         tmp = make_temp_dir()
         store = MemoryStore(tmp / "memory")
         uri = store.commit_session_archive(
@@ -86,6 +86,9 @@ class PrismXKnowledgeTests(unittest.TestCase):
             operations=[
                 {
                     "action": "upsert",
+                    "type": "project",
+                    "source_tree_id": "tree-a",
+                    "source_memory_id": "memory-a",
                     "category": "decisions",
                     "key": "tgm-runtime",
                     "title": "TGM Runtime",
@@ -103,16 +106,15 @@ class PrismXKnowledgeTests(unittest.TestCase):
             },
         )
         self.assertEqual(uri, "ctx://sessiontrees/archives/2026/05/30/s1-c1")
-        wiki_path = tmp / "data" / "knowledge" / "wiki" / "Project" / "tgm-runtime.md"
-        self.assertTrue(wiki_path.exists())
-        self.assertTrue((tmp / "data" / "knowledge" / "semantic_index.jsonl").exists())
-        wiki_text = wiki_path.read_text(encoding="utf-8")
-        self.assertIn('"source_session": "s1"', wiki_text)
-        self.assertIn('"source_branch": "leaf-b"', wiki_text)
-        hits = store.search_memory("episode wiki knowledge", limit=5)
-        self.assertTrue(any(hit["uri"] == "mem://project/decisions/tgm-runtime" for hit in hits))
-        links = store.graph_neighbors("mem://project/decisions/tgm-runtime")
-        self.assertTrue(any(link["relation"] == "derived_from" for link in links))
+        index_path = tmp / "data" / "knowledge" / "MEMORY.md"
+        memory_path = tmp / "data" / "knowledge" / "memories" / "project" / "tree-a-memory-a.md"
+        self.assertTrue(index_path.exists())
+        self.assertTrue(memory_path.exists())
+        memory_text = memory_path.read_text(encoding="utf-8")
+        self.assertIn("source_tree_id: tree-a", memory_text)
+        self.assertIn("source_memory_id: memory-a", memory_text)
+        hits = store.search_memory("TGM Runtime", limit=5)
+        self.assertTrue(any(hit["uri"] == "mem://project/tree-a-memory-a" for hit in hits))
 
 
 class PrismXBranchSafeRecallTests(unittest.TestCase):

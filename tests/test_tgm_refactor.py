@@ -43,6 +43,23 @@ class TreeMemoryTests(unittest.TestCase):
         self.assertIn("连通无向图", hits[0]["overview"])
         self.assertNotEqual(kruskal, prim)
 
+    def test_fact_type_search_top_k_and_reuse_count(self) -> None:
+        tmp = make_temp_dir()
+        store = TreeMemoryStore(tmp / "memory" / "tree")
+        for index in range(8):
+            store.remember(
+                "tree-a",
+                f"shared fact {index} about graph algorithms",
+                memory_type="fact",
+                tags=["graph"],
+            )
+
+        hits = store.search("tree-a", "graph algorithms", limit=5)
+
+        self.assertEqual(len(hits), 5)
+        self.assertTrue(all(hit["metadata"]["memory_type"] == "fact" for hit in hits))
+        self.assertEqual(sum(item.reuse_count for item in store.items("tree-a")), 5)
+
 
 class TgmContextGatewayTests(unittest.TestCase):
     def test_remember_defaults_to_tree_memory_and_can_write_long_term(self) -> None:
@@ -66,9 +83,9 @@ class TgmContextGatewayTests(unittest.TestCase):
 
         self.assertTrue(tree_uri.startswith("tree://s1/memory/"))
         self.assertIn("tree://s1/memory/", long_uri)
-        self.assertIn("mem://user/preferences/", long_uri)
+        self.assertIn("mem://feedback/", long_uri)
         self.assertTrue((tmp / "data" / "tree_memory" / "s1.jsonl").exists())
-        self.assertTrue((tmp / "data" / "knowledge" / "context" / "index.jsonl").exists())
+        self.assertTrue((tmp / "data" / "knowledge" / "MEMORY.md").exists())
         self.assertIn("简洁实现", gateway.read(tree_uri))
         self.assertTrue(any("摘要" in item.content for item in tree_memory.items("s1")))
         self.assertTrue(any("摘要" in item["overview"] for item in gateway.search_long_term("摘要")))
@@ -86,7 +103,7 @@ class TgmContextGatewayTests(unittest.TestCase):
         uri = gateway.remember("记住暗号123123", title="暗号", memory_type="user_profile")
 
         self.assertIn("tree://s1/memory/", uri)
-        self.assertIn("mem://user/profile", uri)
+        self.assertIn("mem://user/", uri)
         self.assertEqual(len(tree_memory.items("s1")), 1)
         self.assertEqual(tree_memory.items("s1")[0].memory_type, "finding")
         self.assertEqual(tree_memory.items("s1")[0].metadata["long_term_special_type"], "user_profile")
@@ -110,11 +127,13 @@ class TgmRuntimeRecallTests(unittest.TestCase):
             category="constraints",
             title="MST 共享约束",
         )
-        memory.remember_note(
+        source_uri = gateway.remember(
             "长期知识：图算法方案需要区分稠密图和稀疏图。",
             category="research",
             title="图算法密度取舍",
+            scope="long_term",
         )
+        self.assertIn("mem://reference/", source_uri)
 
         builder = TgmRuntimeRecallBuilder(gateway, limit=4)
         text = builder.build(
@@ -127,6 +146,33 @@ class TgmRuntimeRecallTests(unittest.TestCase):
         self.assertIn("Tree Memory Retrieval", text)
         self.assertIn("Long-term Knowledge Retrieval", text)
         self.assertIn("tree://s1/memory/", text)
+
+    def test_runtime_recall_promotes_tree_memory_after_three_reuses(self) -> None:
+        tmp = make_temp_dir()
+        memory = MemoryStore(tmp / "memory")
+        tree_memory = TreeMemoryStore(tmp / "memory" / "tree")
+        gateway = TgmContextGateway(
+            memory_store=memory,
+            tree_memory=tree_memory,
+            tree_id_provider=lambda: "tree-a",
+        )
+        tree_memory.remember(
+            "tree-a",
+            "暗号123123 是当前树内事实。",
+            title="暗号",
+            memory_type="fact",
+        )
+        builder = TgmRuntimeRecallBuilder(gateway, limit=5)
+
+        for _ in range(3):
+            builder.build("暗号123123")
+
+        item = tree_memory.items("tree-a")[0]
+        self.assertEqual(item.reuse_count, 3)
+        self.assertEqual(item.status, "promoted")
+        self.assertTrue(item.promoted)
+        hits = memory.search_memory("暗号123123", limit=5)
+        self.assertTrue(any(hit["metadata"]["source_memory_id"] == item.id for hit in hits))
 
 
 class KnowledgeCompilerTests(unittest.TestCase):
@@ -148,6 +194,8 @@ class KnowledgeCompilerTests(unittest.TestCase):
 
         self.assertEqual(len(operations), 1)
         self.assertEqual(operations[0]["category"], "decisions")
+        self.assertEqual(operations[0]["type"], "project")
+        self.assertEqual(operations[0]["source_tree_id"], "default")
         self.assertIn("tree-memory", operations[0]["tags"])
         self.assertEqual(operations[0]["links"][0]["relation"], "derived_from")
 
@@ -169,8 +217,10 @@ class KnowledgeCompilerTests(unittest.TestCase):
         for item in tree_memory.promotion_candidates("tree-a"):
             tree_memory.mark_promoted("tree-a", item.id)
 
-        self.assertTrue((tmp / "data" / "knowledge" / "context" / "index.jsonl").exists())
+        self.assertTrue((tmp / "data" / "knowledge" / "MEMORY.md").exists())
+        self.assertTrue((tmp / "data" / "knowledge" / "memories" / "project").exists())
         self.assertEqual(tree_memory.items("tree-a")[0].status, "promoted")
+        self.assertTrue(tree_memory.items("tree-a")[0].promoted)
 
 
 if __name__ == "__main__":

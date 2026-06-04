@@ -16,9 +16,11 @@ TREE_MEMORY_TYPES = {
     "todo",
     "finding",
     "hypothesis",
-    "deprecated",
     "discarded_option",
+    "fact",
 }
+
+TREE_MEMORY_STATUSES = {"active", "archived", "promoted", "discarded"}
 
 
 @dataclass
@@ -35,6 +37,7 @@ class TreeMemoryItem:
     confidence: float = 0.6
     reuse_count: int = 0
     status: str = "active"
+    promoted: bool = False
     created_at: str = ""
     updated_at: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -80,30 +83,45 @@ class TreeMemoryStore:
             return ""
         if memory_type not in TREE_MEMORY_TYPES:
             memory_type = "finding"
+        duplicate = self._find_duplicate(tree_id, content)
         now = _now()
-        item = TreeMemoryItem(
-            id=uuid4().hex[:10],
-            tree_id=tree_id,
-            title=(title or _title_from_content(content)).strip(),
-            content=content,
-            memory_type=memory_type,
-            tags=list(tags or []),
-            source_session_id=source_session_id,
-            source_branch=source_branch,
-            source_entry_id=source_entry_id,
-            confidence=float(confidence),
-            created_at=now,
-            updated_at=now,
-            metadata=dict(metadata or {}),
-        )
+        if duplicate is not None:
+            item = duplicate
+            item.title = (title or item.title or _title_from_content(content)).strip()
+            item.content = content
+            item.memory_type = memory_type
+            item.tags = sorted(set(item.tags + list(tags or [])))
+            item.source_session_id = source_session_id or item.source_session_id
+            item.source_branch = source_branch or item.source_branch
+            item.source_entry_id = source_entry_id or item.source_entry_id
+            item.confidence = max(float(confidence), item.confidence)
+            item.status = "active" if item.status == "discarded" else item.status
+            item.updated_at = now
+            item.metadata = {**item.metadata, **dict(metadata or {})}
+        else:
+            item = TreeMemoryItem(
+                id=uuid4().hex[:10],
+                tree_id=tree_id,
+                title=(title or _title_from_content(content)).strip(),
+                content=content,
+                memory_type=memory_type,
+                tags=list(tags or []),
+                source_session_id=source_session_id,
+                source_branch=source_branch,
+                source_entry_id=source_entry_id,
+                confidence=float(confidence),
+                created_at=now,
+                updated_at=now,
+                metadata=dict(metadata or {}),
+            )
         self._append(tree_id, {"op": "upsert", "item": asdict(item)})
         return item.uri
 
-    def search(self, tree_id: str, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
+    def search(self, tree_id: str, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
         tokens = _tokens(query)
         scored: list[tuple[float, TreeMemoryItem]] = []
         for item in self.items(tree_id):
-            if item.status not in {"active", "promote_requested"}:
+            if item.status != "active":
                 continue
             haystacks = {
                 "title": item.title.lower(),
@@ -165,15 +183,18 @@ class TreeMemoryStore:
                 if event.get("op") == "delete":
                     state.pop(item_id, None)
                     continue
+                item_data.setdefault("promoted", item_data.get("status") == "promoted")
+                if item_data.get("status") not in TREE_MEMORY_STATUSES:
+                    item_data["status"] = "active"
                 state[item_id] = TreeMemoryItem(**item_data)
         return sorted(state.values(), key=lambda item: item.updated_at, reverse=True)
 
     def promotion_candidates(self, tree_id: str) -> list[TreeMemoryItem]:
         candidates = []
         for item in self.items(tree_id):
-            if item.status not in {"active", "promote_requested"}:
+            if item.status != "active":
                 continue
-            if item.confidence >= 0.85 or item.reuse_count >= 2 or item.status == "promote_requested":
+            if item.confidence >= 0.85 or item.reuse_count >= 3:
                 candidates.append(item)
         return candidates
 
@@ -197,6 +218,7 @@ class TreeMemoryStore:
         if item is None:
             return False
         item.status = "promoted"
+        item.promoted = True
         item.updated_at = _now()
         self._append(tree_id, {"op": "upsert", "item": asdict(item)})
         return True
@@ -213,6 +235,7 @@ class TreeMemoryStore:
             "overview": item.content,
             "trust_score": item.confidence,
             "status": item.status,
+            "promoted": item.promoted,
             "sensitivity": "public",
             "updated_at": item.updated_at,
             "tags": item.tags + [item.memory_type],
@@ -223,6 +246,9 @@ class TreeMemoryStore:
                 "source_entry_id": item.source_entry_id,
                 "memory_type": item.memory_type,
                 "reuse_count": item.reuse_count,
+                "confidence": item.confidence,
+                "status": item.status,
+                "promoted": item.promoted,
                 "scope": "tree",
             },
         }
@@ -248,6 +274,17 @@ class TreeMemoryStore:
     def _legacy_path(self, tree_id: str) -> Path:
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", tree_id)
         return self.legacy_root / f"{safe}.jsonl"
+
+    def _find_duplicate(self, tree_id: str, content: str) -> TreeMemoryItem | None:
+        normalized = _normalize_content(content)
+        return next(
+            (
+                item
+                for item in self.items(tree_id)
+                if item.status in {"active", "archived"} and _normalize_content(item.content) == normalized
+            ),
+            None,
+        )
 
 
 def _render_full(item: TreeMemoryItem) -> str:
@@ -279,6 +316,10 @@ def _tokens(text: str) -> set[str]:
         if len(token) > 3 and any("\u4e00" <= ch <= "\u9fff" for ch in token):
             tokens.update(token[i : i + 2] for i in range(len(token) - 1))
     return tokens
+
+
+def _normalize_content(content: str) -> str:
+    return re.sub(r"\s+", " ", content.strip().lower())
 
 
 def _now() -> str:

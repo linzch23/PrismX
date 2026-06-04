@@ -197,6 +197,8 @@ def handle_command(app: AgentApp, workspace: WorkspaceStore, command: str) -> bo
             long_uri = app.memory.remember_note(
                 content,
                 category=LONG_TERM_SPECIAL_CATEGORY_MAP[memory_type],
+                source_tree_id=str(tree_id),
+                source_memory_id=uri.rstrip("/").rsplit("/", 1)[-1],
             )
             print(f"Tree Memory added: {uri}\nLong-term Knowledge added: {long_uri}\n")
             return True
@@ -349,8 +351,6 @@ def _working_context(app: AgentApp) -> str:
 
 def _knowledge(app: AgentApp) -> str:
     items = app.memory.list_context(prefix="mem://", limit=20)
-    if not items:
-        items = app.memory.list_context(prefix="wiki://", limit=20)
     if not items:
         return "No Long-term Knowledge."
     return "\n".join(f"- {item.get('uri')} {item.get('title', '')}" for item in items)

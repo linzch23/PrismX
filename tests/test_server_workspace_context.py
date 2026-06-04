@@ -53,8 +53,14 @@ class ServerWorkspaceContextTests(unittest.TestCase):
         tree_id = payload["activeTreeId"]
         tree_memory = TreeMemoryStore(self.root / "memory" / "tree")
         memory = MemoryStore(self.root / "memory")
-        tree_memory.remember(tree_id, "tree-only reusable finding", memory_type="finding")
-        memory.remember_note("long-term reusable preference", category="preferences", title="Preference")
+        tree_uri = tree_memory.remember(tree_id, "tree-only reusable finding", memory_type="finding")
+        memory.remember_note(
+            "long-term reusable preference",
+            category="preferences",
+            title="Preference",
+            source_tree_id=tree_id,
+            source_memory_id=tree_uri.rsplit("/", 1)[-1],
+        )
         state = SimpleNamespace(
             root=self.root,
             workspace=self.workspace,
@@ -66,6 +72,8 @@ class ServerWorkspaceContextTests(unittest.TestCase):
         self.assertTrue(any("tree-only reusable finding" in item["content"] for item in result["treeMemoryItems"]))
         self.assertFalse(any("tree-only reusable finding" in item["content"] for item in result["longTermKnowledgeItems"]))
         self.assertTrue(any("long-term reusable preference" in item["content"] for item in result["longTermKnowledgeItems"]))
+        self.assertIn("reuseCount", result["treeMemoryItems"][0])
+        self.assertIn("sourceMemoryId", result["longTermKnowledgeItems"][0])
 
 
 if __name__ == "__main__":

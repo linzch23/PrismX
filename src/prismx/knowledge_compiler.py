@@ -15,6 +15,17 @@ TREE_TO_KNOWLEDGE_CATEGORY = {
     "discarded_option": "decisions",
 }
 
+TREE_TO_LONG_TERM_TYPE = {
+    "conclusion": "project",
+    "decision": "project",
+    "constraint": "project",
+    "todo": "project",
+    "finding": "project",
+    "fact": "project",
+    "hypothesis": "project",
+    "discarded_option": "project",
+}
+
 
 class KnowledgeCompiler:
     """Compile stable Tree Memory items into long-term memory operations."""
@@ -32,6 +43,9 @@ class KnowledgeCompiler:
                 {
                     "action": "upsert",
                     "category": category,
+                    "type": TREE_TO_LONG_TERM_TYPE.get(item.memory_type, "project"),
+                    "source_tree_id": item.tree_id,
+                    "source_memory_id": item.id,
                     "key": _key(item),
                     "title": item.title,
                     "abstract": item.content[:180],
