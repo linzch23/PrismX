@@ -1,3 +1,8 @@
+const MIN_SIDEBAR_WIDTH = 240;
+const MAX_SIDEBAR_WIDTH = 480;
+const DEFAULT_SIDEBAR_WIDTH = 300;
+const SIDEBAR_STORAGE_KEY = "prismx.sidebarWidth";
+
 const state = {
   loading: true,
   sending: false,
@@ -14,8 +19,11 @@ const state = {
   drag: null,
   abortController: null,
   renderQueued: false,
+  pendingMessageScroll: null,
   workspaceHandles: new Map(),
   files: { projectId: null, loading: false, error: "", tree: null, needsReconnect: false },
+  sidebarWidth: readSidebarWidth(),
+  resizingSidebar: false,
 };
 
 const WORKSPACE_DB = "prismx-workspaces";
@@ -67,8 +75,18 @@ function applyWorkspace(payload) {
 function render() {
   nodes.app.replaceChildren(
     Header(),
-    el("div", { class: "workspace-shell" }, [
+    el("div", {
+      class: `workspace-shell ${state.resizingSidebar ? "resizing" : ""}`,
+      style: `grid-template-columns: ${state.sidebarWidth}px 4px minmax(0, 1fr);`,
+    }, [
       ProjectSidebar(),
+      el("div", {
+        class: "sidebar-resizer",
+        role: "separator",
+        "aria-orientation": "vertical",
+        title: "Resize sidebar",
+        onmousedown: startSidebarResize,
+      }),
       el("main", { class: "workspace-main" }, [WorkspaceTabs(), activeWorkspace()]),
     ]),
   );
@@ -80,7 +98,14 @@ function scheduleRender() {
   window.requestAnimationFrame(() => {
     state.renderQueued = false;
     render();
+    restoreMessageScroll(state.pendingMessageScroll);
+    state.pendingMessageScroll = null;
   });
+}
+
+function renderPreservingMessageScroll() {
+  state.pendingMessageScroll = state.pendingMessageScroll || captureMessageScroll();
+  scheduleRender();
 }
 
 function normalizeProject(project) {
@@ -229,19 +254,21 @@ function ChatWorkspace() {
   const session = getActiveSession();
   const messages = getActiveMessages();
   return el("section", { class: "workspace-view chat-workspace" }, [
-    TitleRow("Agent Runtime", session.title, [
-      el("span", { class: `node-status ${session.status}` }, session.status),
-      button("New Child Session", "primary", () => createChildSession(session.id)),
+    el("div", { class: "chat-column" }, [
+      TitleRow("Agent Runtime", session.title, [
+        el("span", { class: `node-status ${session.status}` }, session.status),
+        button("New Child Session", "primary", () => createChildSession(session.id)),
+      ]),
+      el("div", { class: "session-context-row" }, [
+        infoPill("Project", projectName(getActiveProject())),
+        infoPill("Tree", getActiveTree()?.title || "-"),
+        infoPill("Messages", String(messages.length)),
+      ]),
+      el("div", { class: "messages-scroll-area message-list" }, messages.length
+        ? messages.map((message) => MessageCard(message))
+        : [EmptyState("This Session has no messages yet.")]),
+      CommandInput(),
     ]),
-    el("div", { class: "session-context-row" }, [
-      infoPill("Project", projectName(getActiveProject())),
-      infoPill("Tree", getActiveTree()?.title || "-"),
-      infoPill("Messages", String(messages.length)),
-    ]),
-    el("div", { class: "message-list" }, messages.length
-      ? messages.map((message) => MessageCard(message))
-      : [EmptyState("This Session has no messages yet.")]),
-    CommandInput(),
   ]);
 }
 
@@ -763,7 +790,7 @@ async function sendComposerMessage(event) {
     { id: assistantId, role: "assistant", createdAt: new Date().toISOString(), output: "", toolCalls: [] },
   ];
   textarea.value = "";
-  render();
+  renderPreservingMessageScroll();
 
   try {
     await sendChatStream(message, sessionId, assistantId, controller, getWorkingContext(sessionId));
@@ -784,7 +811,7 @@ async function sendComposerMessage(event) {
   } finally {
     if (state.abortController === controller) state.abortController = null;
     state.sending = false;
-    render();
+    renderPreservingMessageScroll();
   }
 }
 
@@ -847,8 +874,76 @@ function handleSseEvent(chunk, sessionId, assistantId) {
       tool.output = payload.content || payload.output || "";
     }
   }
-  scheduleRender();
+  renderPreservingMessageScroll();
   return {};
+}
+
+function readSidebarWidth() {
+  try {
+    return clamp(Number(localStorage.getItem(SIDEBAR_STORAGE_KEY)) || DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+}
+
+function setSidebarWidth(width, persist = false) {
+  state.sidebarWidth = clamp(Math.round(Number(width) || DEFAULT_SIDEBAR_WIDTH), MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+  if (persist) {
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, String(state.sidebarWidth));
+    } catch {
+      // Local storage can be unavailable in private or restricted browser contexts.
+    }
+  }
+}
+
+function startSidebarResize(event) {
+  event.preventDefault();
+  state.resizingSidebar = true;
+  document.body.style.cursor = "col-resize";
+  window.addEventListener("mousemove", moveSidebarResize);
+  window.addEventListener("mouseup", endSidebarResize);
+}
+
+function moveSidebarResize(event) {
+  if (!state.resizingSidebar) return;
+  setSidebarWidth(event.clientX);
+  render();
+}
+
+function endSidebarResize() {
+  if (!state.resizingSidebar) return;
+  state.resizingSidebar = false;
+  document.body.style.cursor = "";
+  setSidebarWidth(state.sidebarWidth, true);
+  window.removeEventListener("mousemove", moveSidebarResize);
+  window.removeEventListener("mouseup", endSidebarResize);
+  render();
+}
+
+function isNearBottom(element) {
+  if (!element) return true;
+  return element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+}
+
+function captureMessageScroll() {
+  const element = document.querySelector(".messages-scroll-area");
+  if (!element) return null;
+  return {
+    scrollTop: element.scrollTop,
+    wasNearBottom: isNearBottom(element),
+  };
+}
+
+function restoreMessageScroll(snapshot) {
+  if (!snapshot) return;
+  const element = document.querySelector(".messages-scroll-area");
+  if (!element) return;
+  if (snapshot.wasNearBottom) {
+    element.scrollTop = element.scrollHeight;
+  } else {
+    element.scrollTop = snapshot.scrollTop;
+  }
 }
 
 function startCanvasPan(event) {
