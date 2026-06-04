@@ -24,6 +24,7 @@ const state = {
   files: { projectId: null, loading: false, error: "", tree: null, needsReconnect: false },
   sidebarWidth: readSidebarWidth(),
   resizingSidebar: false,
+  modal: null,
 };
 
 const WORKSPACE_DB = "prismx-workspaces";
@@ -42,6 +43,7 @@ const nodes = {
 };
 
 async function init() {
+  window.addEventListener("keydown", handleGlobalKeydown);
   render();
   await loadWorkspace();
 }
@@ -73,7 +75,7 @@ function applyWorkspace(payload) {
 }
 
 function render() {
-  nodes.app.replaceChildren(
+  const children = [
     Header(),
     el("div", {
       class: `workspace-shell ${state.resizingSidebar ? "resizing" : ""}`,
@@ -89,7 +91,9 @@ function render() {
       }),
       el("main", { class: "workspace-main" }, [WorkspaceTabs(), activeWorkspace()]),
     ]),
-  );
+  ];
+  if (state.modal) children.push(ModalHost());
+  nodes.app.replaceChildren(...children);
 }
 
 function scheduleRender() {
@@ -141,9 +145,13 @@ function Header() {
       ]),
     ]),
     el("div", { class: "header-actions" }, [
-      el("span", { class: `status-badge ${state.loading ? "" : "live"}` }, state.loading ? "loading" : "live API"),
+      el("button", {
+        class: `status-badge api-status ${state.loading ? "" : "live"}`,
+        type: "button",
+        onclick: () => openApiStatusModal(),
+      }, state.loading ? "syncing" : "API Connected"),
       iconButton("Refresh", "Refresh workspace", () => loadWorkspace()),
-      button("Run Agent", "primary", () => focusComposer(), state.sending),
+      button("Settings", "", () => openSettingsModal()),
       el("div", { class: "avatar", title: "PrismX user" }, "P"),
     ]),
   ]);
@@ -404,7 +412,7 @@ function MemoryWorkspace() {
   const knowledge = getKnowledgeForActiveContext();
   const stats = getWorkingContextStats();
   return el("section", { class: "workspace-view memory-workspace" }, [
-    TitleRow("Tree-Guided Memory Layer", "Memory Recall", []),
+    TitleRow("Tree-Guided Memory Layer", "Knowledge Space", []),
     el("div", { class: "memory-grid" }, [
       ContextCard("Active Path Context", path.map((session, index) =>
         `${index + 1}. ${session.title} / ${getMessagesForSession(session.id).length} messages`
@@ -490,6 +498,132 @@ function EmptyState(text) {
   return el("div", { class: "empty-state" }, text);
 }
 
+function ModalHost() {
+  const modal = state.modal;
+  if (!modal) return null;
+  return el("div", {
+    class: "modal-backdrop",
+    onclick: (event) => {
+      if (event.target === event.currentTarget) closeModal(null);
+    },
+  }, [
+    el("section", { class: "modal-card", role: "dialog", "aria-modal": "true", "aria-labelledby": "modal-title" }, [
+      el("div", { class: "modal-head" }, [
+        el("div", {}, [
+          el("p", { class: "eyebrow" }, modal.eyebrow || "PrismX"),
+          el("h2", { id: "modal-title" }, modal.title),
+        ]),
+        iconButton("X", "Close", () => closeModal(null)),
+      ]),
+      modal.type === "input" ? InputModalBody(modal) : InfoModalBody(modal),
+      el("div", { class: "modal-actions" }, [
+        modal.cancelLabel ? button(modal.cancelLabel, "secondary", () => closeModal(null)) : null,
+        modal.type === "input"
+          ? button(modal.confirmLabel || "Save", "primary", () => submitInputModal())
+          : modal.confirmLabel
+            ? button(modal.confirmLabel, modal.danger ? "danger" : "primary", () => closeModal(true))
+            : null,
+      ]),
+    ]),
+  ]);
+}
+
+function InputModalBody(modal) {
+  return el("div", { class: "modal-body" }, [
+    modal.body ? el("p", {}, modal.body) : null,
+    el("input", {
+      id: "modal-input",
+      class: "modal-input",
+      value: modal.initialValue || "",
+      placeholder: modal.placeholder || "",
+      onkeydown: (event) => {
+        if (event.key === "Enter") submitInputModal();
+      },
+    }),
+  ]);
+}
+
+function InfoModalBody(modal) {
+  const body = Array.isArray(modal.body) ? modal.body : [modal.body].filter(Boolean);
+  return el("div", { class: "modal-body" }, body.map((item) =>
+    typeof item === "string" ? el("p", {}, item) : item
+  ));
+}
+
+function openInputModal({ title, body = "", initialValue = "", placeholder = "", confirmLabel = "Save", cancelLabel = "Cancel" }) {
+  return openModal({ type: "input", title, body, initialValue, placeholder, confirmLabel, cancelLabel });
+}
+
+function openConfirmModal({ title, body, confirmLabel = "Delete", cancelLabel = "Cancel", danger = false }) {
+  return openModal({ type: "confirm", title, body, confirmLabel, cancelLabel, danger });
+}
+
+function openInfoModal({ title, body, confirmLabel = "Close" }) {
+  return openModal({ type: "info", title, body, confirmLabel, cancelLabel: "" });
+}
+
+function openModal(modal) {
+  return new Promise((resolve) => {
+    state.modal = { ...modal, resolve };
+    render();
+    window.requestAnimationFrame(() => document.querySelector("#modal-input")?.focus());
+  });
+}
+
+function closeModal(result) {
+  const modal = state.modal;
+  state.modal = null;
+  render();
+  if (modal?.resolve) modal.resolve(result);
+}
+
+function submitInputModal() {
+  const value = document.querySelector("#modal-input")?.value.trim() || "";
+  if (!value) return;
+  closeModal(value);
+}
+
+function handleGlobalKeydown(event) {
+  if (event.key === "Escape" && state.modal) closeModal(null);
+}
+
+function openApiStatusModal() {
+  const tree = getActiveTree();
+  const session = getActiveSession();
+  return openInfoModal({
+    title: state.loading ? "API Syncing" : "API Connected",
+    body: [
+      detailRow("Connection", state.loading ? "Syncing workspace" : "Connected"),
+      detailRow("Project", projectName(getActiveProject())),
+      detailRow("Session Tree", tree?.title || "-"),
+      detailRow("Active Session", session?.title || "-"),
+      detailRow("Tree Memory", `${getTreeMemoryForActiveTree().length} items`),
+      detailRow("Long-term Knowledge", `${state.longTermKnowledgeItems.length} items`),
+      detailRow("Workspace Sessions", `${tree?.sessions?.length || 0} sessions`),
+    ],
+  });
+}
+
+function openSettingsModal() {
+  return openInfoModal({
+    title: "Settings",
+    body: [
+      detailRow("Model", "Managed by PrismX runtime"),
+      detailRow("Memory", "Active Path, Tree Memory, Long-term Knowledge"),
+      detailRow("Workspace", projectWorkspaceLabel(getActiveProject()) || "Not connected"),
+      detailRow("Theme", "Prism Light"),
+      detailRow("MCP", "Available through runtime tools"),
+    ],
+  });
+}
+
+function detailRow(label, value) {
+  return el("div", { class: "modal-detail-row" }, [
+    el("span", {}, label),
+    el("strong", {}, value),
+  ]);
+}
+
 async function createProject() {
   let handle = null;
   let name = "";
@@ -503,7 +637,12 @@ async function createProject() {
       return;
     }
   } else {
-    name = prompt("Project name", "New Project")?.trim() || "";
+    name = await openInputModal({
+      title: "New Project",
+      body: "Name this project. Folder selection is unavailable in this browser.",
+      initialValue: "New Project",
+      confirmLabel: "Create",
+    }) || "";
     if (!name) return;
     showToast("This browser does not support folder selection. Project created without a workspace folder.");
   }
@@ -530,7 +669,11 @@ async function createProject() {
 async function renameProject(projectId) {
   const project = state.projects.find((item) => item.id === projectId);
   if (!project) return;
-  const name = prompt("Rename Project", projectName(project))?.trim();
+  const name = await openInputModal({
+    title: "Rename Project",
+    initialValue: projectName(project),
+    confirmLabel: "Save",
+  });
   if (!name || name === projectName(project)) return;
   applyWorkspace(await apiPatch(`/api/projects/${encodeURIComponent(projectId)}`, { name, title: name }));
   render();
@@ -543,7 +686,12 @@ async function deleteProject(projectId) {
   const message = hasTrees
     ? "This project contains session trees. Delete the entire project?"
     : "Delete this project?";
-  if (!confirm(message)) return;
+  if (!(await openConfirmModal({
+    title: "Delete Project?",
+    body: `${message} This action cannot be undone.`,
+    confirmLabel: "Delete",
+    danger: true,
+  }))) return;
   applyWorkspace(await apiDelete(`/api/projects/${encodeURIComponent(projectId)}`));
   state.workspaceHandles.delete(projectId);
   render();
@@ -709,7 +857,11 @@ function idbRequest(request) {
 async function createSessionTree(projectId) {
   const project = state.projects.find((item) => item.id === projectId) || getActiveProject() || state.projects[0];
   if (!project) return;
-  const title = prompt("Session Tree title", "New Session Tree");
+  const title = await openInputModal({
+    title: "New Session Tree",
+    initialValue: "New Session Tree",
+    confirmLabel: "Create",
+  });
   if (!title) return;
   applyWorkspace(await apiPost("/api/session-trees", { projectId: project.id, title }));
   render();
@@ -718,7 +870,11 @@ async function createSessionTree(projectId) {
 async function renameSessionTree(treeId) {
   const tree = state.sessionTrees.find((item) => item.id === treeId);
   if (!tree) return;
-  const title = prompt("Rename Session Tree", tree.title)?.trim();
+  const title = await openInputModal({
+    title: "Rename Session Tree",
+    initialValue: tree.title,
+    confirmLabel: "Save",
+  });
   if (!title || title === tree.title) return;
   applyWorkspace(await apiPatch(`/api/session-trees/${encodeURIComponent(treeId)}`, { title }));
   render();
@@ -727,7 +883,12 @@ async function renameSessionTree(treeId) {
 async function deleteSessionTree(treeId) {
   const tree = state.sessionTrees.find((item) => item.id === treeId);
   if (!tree) return;
-  if (!confirm("Delete this session tree and all its sessions?")) return;
+  if (!(await openConfirmModal({
+    title: "Delete Session Tree?",
+    body: "This will delete the session tree and all of its sessions. This action cannot be undone.",
+    confirmLabel: "Delete",
+    danger: true,
+  }))) return;
   applyWorkspace(await apiDelete(`/api/session-trees/${encodeURIComponent(treeId)}`));
   render();
 }
@@ -735,7 +896,11 @@ async function deleteSessionTree(treeId) {
 async function createChildSession(parentId) {
   const tree = getActiveTree();
   if (!tree || !parentId) return;
-  const title = prompt("Child Session title", "New Session");
+  const title = await openInputModal({
+    title: "New Child Session",
+    initialValue: "New Session",
+    confirmLabel: "Create",
+  });
   if (!title) return;
   applyWorkspace(await apiPost("/api/session-nodes", { treeId: tree.id, parentId, title }));
   state.activeTab = "chat";
@@ -745,7 +910,11 @@ async function createChildSession(parentId) {
 async function renameSession(sessionId) {
   const session = getSessionById(sessionId);
   if (!session) return;
-  const title = prompt("Rename Session", session.title)?.trim();
+  const title = await openInputModal({
+    title: "Rename Session",
+    initialValue: session.title,
+    confirmLabel: "Save",
+  });
   if (!title || title === session.title) return;
   applyWorkspace(await apiPatch(`/api/session-nodes/${encodeURIComponent(sessionId)}`, { title }));
   render();
@@ -760,7 +929,15 @@ async function deleteSession(sessionId) {
     return;
   }
   const descendantCount = collectDescendantIds(session.id).length - 1;
-  if (descendantCount > 0 && !confirm(`Delete this Session and ${descendantCount} child Session(s)?`)) return;
+  const body = descendantCount > 0
+    ? `Delete this Session and ${descendantCount} child Session(s)? This action cannot be undone.`
+    : "Delete this Session? This action cannot be undone.";
+  if (!(await openConfirmModal({
+    title: "Delete Session?",
+    body,
+    confirmLabel: "Delete",
+    danger: true,
+  }))) return;
   applyWorkspace(await apiDelete(`/api/session-nodes/${encodeURIComponent(sessionId)}`));
   render();
 }
