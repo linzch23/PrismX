@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from .loop import AgentApp
+from .runtime_recall import LONG_TERM_SPECIAL_CATEGORY_MAP, LONG_TERM_SPECIAL_MEMORY_TYPES
 from .tree_memory import TREE_MEMORY_TYPES
 from .workspace import WorkspaceStore
 
@@ -175,8 +176,8 @@ def handle_command(app: AgentApp, workspace: WorkspaceStore, command: str) -> bo
         return True
     if command.startswith("/memory add "):
         memory_type, content = _split_id_text(command, "/memory add ")
-        if memory_type not in TREE_MEMORY_TYPES:
-            valid = ", ".join(sorted(TREE_MEMORY_TYPES))
+        if memory_type not in TREE_MEMORY_TYPES and memory_type not in LONG_TERM_SPECIAL_MEMORY_TYPES:
+            valid = ", ".join(sorted(TREE_MEMORY_TYPES | LONG_TERM_SPECIAL_MEMORY_TYPES))
             print(f"Invalid memory type. Valid types: {valid}\n")
             return True
         payload = workspace.payload()
@@ -187,9 +188,18 @@ def handle_command(app: AgentApp, workspace: WorkspaceStore, command: str) -> bo
         uri = app.tree_memory.remember(
             str(tree_id),
             content,
-            memory_type=memory_type,
+            memory_type="finding" if memory_type in LONG_TERM_SPECIAL_MEMORY_TYPES else memory_type,
+            tags=[memory_type],
             source_session_id=str(payload.get("activeSessionId") or app.session_id),
+            metadata={"long_term_special_type": memory_type} if memory_type in LONG_TERM_SPECIAL_MEMORY_TYPES else {},
         )
+        if memory_type in LONG_TERM_SPECIAL_MEMORY_TYPES:
+            long_uri = app.memory.remember_note(
+                content,
+                category=LONG_TERM_SPECIAL_CATEGORY_MAP[memory_type],
+            )
+            print(f"Tree Memory added: {uri}\nLong-term Knowledge added: {long_uri}\n")
+            return True
         print(f"Tree Memory added: {uri}\n")
         return True
     if command.startswith("/memory delete "):

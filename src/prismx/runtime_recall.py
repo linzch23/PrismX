@@ -4,6 +4,21 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+LONG_TERM_SPECIAL_MEMORY_TYPES = {
+    "user_profile",
+    "user_feedback",
+    "project_state",
+    "reference",
+}
+
+LONG_TERM_SPECIAL_CATEGORY_MAP = {
+    "user_profile": "profile",
+    "user_feedback": "preferences",
+    "project_state": "events",
+    "reference": "research",
+}
+
+
 @dataclass
 class TgmRecallResult:
     layer: str
@@ -57,17 +72,25 @@ class TgmContextGateway:
         scope: str = "tree",
         memory_type: str | None = None,
     ) -> str:
-        if scope == "long_term":
-            return self.memory_store.remember_note(note, category=category, title=title)
-        return self.tree_memory.remember(
+        long_term_category = _long_term_category(category, memory_type)
+        tree_uri = self.tree_memory.remember(
             self.tree_id,
             note,
             title=title,
-            memory_type=memory_type or _category_to_tree_type(category),
-            tags=[category],
+            memory_type=_tree_type_for_remember(category, memory_type),
+            tags=_tree_tags_for_remember(category, memory_type),
             source_session_id=self.active_session_id,
             source_branch=self.active_branch_id,
+            metadata=_tree_metadata_for_remember(category, memory_type, scope),
         )
+        if scope == "long_term" or long_term_category:
+            long_uri = self.memory_store.remember_note(
+                note,
+                category=long_term_category or category,
+                title=title,
+            )
+            return f"{tree_uri} + {long_uri}" if tree_uri and long_uri else tree_uri or long_uri
+        return tree_uri
 
     def search(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
         tree_limit = max(1, limit // 2)
@@ -192,3 +215,31 @@ def _category_to_tree_type(category: str) -> str:
         "patterns": "conclusion",
     }
     return mapping.get(category, "finding")
+
+
+def _long_term_category(category: str, memory_type: str | None) -> str:
+    if memory_type in LONG_TERM_SPECIAL_MEMORY_TYPES:
+        return LONG_TERM_SPECIAL_CATEGORY_MAP[str(memory_type)]
+    if category in LONG_TERM_SPECIAL_MEMORY_TYPES:
+        return LONG_TERM_SPECIAL_CATEGORY_MAP[category]
+    return ""
+
+
+def _tree_type_for_remember(category: str, memory_type: str | None) -> str:
+    if memory_type in LONG_TERM_SPECIAL_MEMORY_TYPES:
+        return "finding"
+    return memory_type or _category_to_tree_type(category)
+
+
+def _tree_tags_for_remember(category: str, memory_type: str | None) -> list[str]:
+    tags = [category]
+    if memory_type and memory_type != category:
+        tags.append(memory_type)
+    return tags
+
+
+def _tree_metadata_for_remember(category: str, memory_type: str | None, scope: str) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"remember_scope": scope}
+    if category in LONG_TERM_SPECIAL_MEMORY_TYPES or memory_type in LONG_TERM_SPECIAL_MEMORY_TYPES:
+        metadata["long_term_special_type"] = memory_type or category
+    return metadata

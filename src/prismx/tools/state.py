@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .base import Tool, object_schema
+from ..runtime_recall import LONG_TERM_SPECIAL_MEMORY_TYPES
 
 
 VALID_STATUSES = {"pending", "in_progress", "completed"}
@@ -79,7 +80,8 @@ class RememberTool(Tool):
     name = "remember"
     description = (
         "Write reusable memory. By default this writes Tree Memory for the current session tree. "
-        "Use scope='long_term' only for durable cross-project facts. "
+        "Special memory_type values user_profile, user_feedback, project_state, and reference "
+        "write Tree Memory and Long-term Knowledge. Use scope='long_term' to dual-write other durable facts. "
         "category: preferences|events|decisions|constraints|cases|patterns|tools|skills|entities|open_tasks|profile"
     )
 
@@ -103,6 +105,10 @@ class RememberTool(Tool):
                     "finding",
                     "hypothesis",
                     "discarded_option",
+                    "user_profile",
+                    "user_feedback",
+                    "project_state",
+                    "reference",
                 ],
             },
         }, required=["note"])
@@ -117,7 +123,8 @@ class RememberTool(Tool):
     ) -> str:
         valid = {"profile", "preferences", "entities", "events",
                  "decisions", "constraints", "open_tasks",
-                 "cases", "patterns", "tools", "skills"}
+                 "cases", "patterns", "tools", "skills",
+                 *LONG_TERM_SPECIAL_MEMORY_TYPES}
         if category not in valid:
             return f"Error: invalid category '{category}'. Valid: {', '.join(sorted(valid))}"
         if hasattr(self.memory_store, "remember"):

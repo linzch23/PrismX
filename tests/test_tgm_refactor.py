@@ -65,11 +65,34 @@ class TgmContextGatewayTests(unittest.TestCase):
         )
 
         self.assertTrue(tree_uri.startswith("tree://s1/memory/"))
-        self.assertTrue(long_uri.startswith("mem://user/preferences/"))
+        self.assertIn("tree://s1/memory/", long_uri)
+        self.assertIn("mem://user/preferences/", long_uri)
         self.assertTrue((tmp / "data" / "tree_memory" / "s1.jsonl").exists())
         self.assertTrue((tmp / "data" / "knowledge" / "context" / "index.jsonl").exists())
         self.assertIn("简洁实现", gateway.read(tree_uri))
-        self.assertIn("摘要", gateway.read(long_uri))
+        self.assertTrue(any("摘要" in item.content for item in tree_memory.items("s1")))
+        self.assertTrue(any("摘要" in item["overview"] for item in gateway.search_long_term("摘要")))
+
+    def test_special_memory_type_dual_writes_tree_and_long_term(self) -> None:
+        tmp = make_temp_dir()
+        memory = MemoryStore(tmp / "memory")
+        tree_memory = TreeMemoryStore(tmp / "memory" / "tree")
+        gateway = TgmContextGateway(
+            memory_store=memory,
+            tree_memory=tree_memory,
+            tree_id_provider=lambda: "s1",
+        )
+
+        uri = gateway.remember("记住暗号123123", title="暗号", memory_type="user_profile")
+
+        self.assertIn("tree://s1/memory/", uri)
+        self.assertIn("mem://user/profile", uri)
+        self.assertEqual(len(tree_memory.items("s1")), 1)
+        self.assertEqual(tree_memory.items("s1")[0].memory_type, "finding")
+        self.assertEqual(tree_memory.items("s1")[0].metadata["long_term_special_type"], "user_profile")
+        self.assertTrue((tmp / "data" / "tree_memory" / "s1.jsonl").exists())
+        self.assertTrue(any("123123" in item["overview"] for item in gateway.search_tree("暗号123123")))
+        self.assertTrue(any("123123" in item["overview"] for item in gateway.search_long_term("暗号123123")))
 
 
 class TgmRuntimeRecallTests(unittest.TestCase):

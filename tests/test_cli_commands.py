@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from prismx.cli import HELP, handle_command
+from prismx.memory import MemoryStore
 from prismx.tree_memory import TreeMemoryStore
 from prismx.tree_session import FakeSummarizer, TreeSessionManager
 from prismx.workspace import WorkspaceStore
@@ -25,6 +26,7 @@ class CliCommandTests(unittest.TestCase):
         self.app = SimpleNamespace(
             root=self.root,
             tree=self.tree,
+            memory=MemoryStore(self.root / "memory"),
             tree_memory=TreeMemoryStore(self.root / "memory" / "tree"),
             history=[],
             session_id=self.workspace.payload()["activeSessionId"],
@@ -66,6 +68,16 @@ class CliCommandTests(unittest.TestCase):
 
         self.assertIn("PrismX uses Session nodes", memory_output)
         self.assertIn("Active Path", path_output)
+
+    def test_memory_add_special_type_writes_long_term_knowledge(self) -> None:
+        output = self.run_command("/memory add user_profile 记住暗号123123")
+        memory_output = self.run_command("/memory")
+        knowledge_output = self.run_command("/knowledge")
+
+        self.assertIn("Tree Memory added", output)
+        self.assertIn("Long-term Knowledge added", output)
+        self.assertIn("123123", memory_output)
+        self.assertIn("mem://user/profile", knowledge_output)
 
 
 if __name__ == "__main__":

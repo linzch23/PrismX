@@ -100,3 +100,24 @@ class RememberToolUpgradeTests(unittest.TestCase):
         self.assertIn("Remembered", result)
         self.assertEqual(calls[0], ("Dark mode", "preferences", "Theme Preference", "tree", None))
 
+    def test_special_memory_type_routes_through_gateway(self):
+        from prismx.memory import MemoryStore
+        from prismx.runtime_recall import TgmContextGateway
+        from prismx.tools.state import RememberTool
+        from prismx.tree_memory import TreeMemoryStore
+
+        tmp = make_temp_dir()
+        tree_memory = TreeMemoryStore(tmp / "memory" / "tree")
+        gateway = TgmContextGateway(
+            memory_store=MemoryStore(tmp / "memory"),
+            tree_memory=tree_memory,
+            tree_id_provider=lambda: "s1",
+        )
+        tool = RememberTool(gateway)
+
+        result = tool.execute(note="记住暗号123123", memory_type="user_profile", title="暗号")
+
+        self.assertIn("tree://s1/memory/", result)
+        self.assertIn("mem://user/profile", result)
+        self.assertEqual(len(tree_memory.items("s1")), 1)
+
