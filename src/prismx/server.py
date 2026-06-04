@@ -157,8 +157,13 @@ def _handler_factory(state: WebState):
                         self._send_json({"reply": reply, "state": _state_payload(state.app)})
                         return
                     if path == "/api/projects":
-                        title = str(payload.get("title", "")).strip() or "New Project"
-                        state.workspace.create_project(title)
+                        name = str(payload.get("name") or payload.get("title") or "").strip() or "New Project"
+                        state.workspace.create_project(
+                            name,
+                            name=name,
+                            workspace_name=str(payload.get("workspaceName") or "").strip(),
+                            workspace_display_path=str(payload.get("workspaceDisplayPath") or "").strip(),
+                        )
                         self._send_json(_workspace_payload(state), status=HTTPStatus.CREATED)
                         return
                     if path == "/api/session-trees":

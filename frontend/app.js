@@ -13,8 +13,15 @@ const state = {
   treeView: { x: 0, y: 0, scale: 1 },
   drag: null,
   abortController: null,
+  renderQueued: false,
+  workspaceHandles: new Map(),
+  files: { projectId: null, loading: false, error: "", tree: null, needsReconnect: false },
 };
 
+const WORKSPACE_DB = "prismx-workspaces";
+const WORKSPACE_STORE = "handles";
+const FILE_TREE_MAX_DEPTH = 2;
+const FILE_TREE_MAX_ITEMS = 200;
 const NODE_WIDTH = 260;
 const NODE_HEIGHT = 112;
 const HORIZONTAL_GAP = 170;
@@ -46,7 +53,7 @@ async function loadWorkspace() {
 }
 
 function applyWorkspace(payload) {
-  state.projects = payload.projects || [];
+  state.projects = (payload.projects || []).map(normalizeProject);
   state.sessionTrees = payload.sessionTrees || [];
   state.activeProjectId = payload.activeProjectId || state.projects[0]?.id || null;
   state.activeTreeId = payload.activeTreeId || state.sessionTrees[0]?.id || null;
@@ -67,20 +74,51 @@ function render() {
   );
 }
 
+function scheduleRender() {
+  if (state.renderQueued) return;
+  state.renderQueued = true;
+  window.requestAnimationFrame(() => {
+    state.renderQueued = false;
+    render();
+  });
+}
+
+function normalizeProject(project) {
+  const name = String(project.name || project.title || "Untitled Project");
+  return {
+    ...project,
+    name,
+    title: String(project.title || name),
+    treeIds: project.treeIds || [],
+    workspaceName: project.workspaceName || "",
+    workspaceDisplayPath: project.workspaceDisplayPath || "",
+  };
+}
+
+function projectName(project) {
+  return project?.name || project?.title || "Untitled Project";
+}
+
+function projectWorkspaceLabel(project) {
+  return project?.workspaceDisplayPath || project?.workspaceName || "";
+}
+
 function Header() {
+  const activeProject = getActiveProject();
   const activeSession = getActiveSession();
+  const workspace = projectWorkspaceLabel(activeProject) || "No workspace folder";
   return el("header", { class: "top-header" }, [
     el("div", { class: "brand-block" }, [
       el("div", { class: "brand-mark", "aria-hidden": "true" }, "PX"),
       el("div", {}, [
         el("strong", {}, "PrismX"),
-        el("span", {}, activeSession ? `Active Session: ${activeSession.title}` : "Session Tree Workbench"),
+        el("span", {}, `Project: ${projectName(activeProject)} / Workspace: ${workspace} / Active Session: ${activeSession?.title || "-"}`),
       ]),
     ]),
     el("div", { class: "header-actions" }, [
       el("span", { class: `status-badge ${state.loading ? "" : "live"}` }, state.loading ? "loading" : "live API"),
       iconButton("Refresh", "Refresh workspace", () => loadWorkspace()),
-      button("Run Agent", "primary", () => focusComposer()),
+      button("Run Agent", "primary", () => focusComposer(), state.sending),
       el("div", { class: "avatar", title: "PrismX user" }, "P"),
     ]),
   ]);
@@ -113,11 +151,17 @@ function ProjectItem(project) {
         state.activeProjectId = project.id;
         const firstTree = trees[0];
         if (firstTree) selectSession(firstTree.activeSessionId || firstTree.rootSessionId);
-        else render();
+        else {
+          render();
+          if (state.activeTab === "files") loadFilesForActiveProject();
+        }
       },
     }, [
       el("span", { class: "project-dot" }),
-      el("strong", {}, project.title || "Untitled Project"),
+      el("span", { class: "project-copy" }, [
+        el("strong", {}, projectName(project)),
+        projectWorkspaceLabel(project) ? el("small", {}, projectWorkspaceLabel(project)) : null,
+      ]),
       el("em", {}, String(trees.length)),
       projectRowAction("+", "New Session Tree", () => createSessionTree(project.id)),
       projectRowAction("R", "Rename Project", () => renameProject(project.id)),
@@ -151,6 +195,7 @@ function WorkspaceTabs() {
     tabButton("chat", "Chat"),
     tabButton("tree", "Tree"),
     tabButton("memory", "Memory"),
+    tabButton("files", "Files"),
   ]);
 }
 
@@ -161,12 +206,14 @@ function tabButton(id, label) {
     onclick: () => {
       state.activeTab = id;
       render();
+      if (id === "files") loadFilesForActiveProject();
     },
   }, label);
 }
 
 function activeWorkspace() {
   if (state.loading) return el("section", { class: "workspace-view empty-view" }, "Loading PrismX workspace...");
+  if (state.activeTab === "files") return FilesWorkspace();
   if (!getActiveTree() || !getActiveSession()) {
     return el("section", { class: "workspace-view empty-view" }, [
       el("h1", {}, "No Session Tree"),
@@ -187,7 +234,7 @@ function ChatWorkspace() {
       button("New Child Session", "primary", () => createChildSession(session.id)),
     ]),
     el("div", { class: "session-context-row" }, [
-      infoPill("Project", getActiveProject()?.title || "-"),
+      infoPill("Project", projectName(getActiveProject())),
       infoPill("Tree", getActiveTree()?.title || "-"),
       infoPill("Messages", String(messages.length)),
     ]),
@@ -231,7 +278,6 @@ function CommandInput() {
         id: "composer-input",
         rows: "3",
         placeholder: "Tell PrismX what to do in this Session...",
-        disabled: state.sending ? "disabled" : null,
       }),
       el("button", {
         id: "send-button",
@@ -287,6 +333,11 @@ function TreeEdge(edge, activePathIds) {
   const active = activePathIds.has(edge.parent.id) && activePathIds.has(edge.child.id);
   return el("path", {
     class: active ? "active" : "",
+    fill: "none",
+    stroke: active ? "#6366F1" : "#CBD5E1",
+    "stroke-linecap": "round",
+    "stroke-width": active ? "3" : "2",
+    opacity: active ? "1" : "0.7",
     d: `M ${a.x} ${a.y} C ${mid} ${a.y}, ${mid} ${b.y}, ${b.x} ${b.y}`,
   });
 }
@@ -344,6 +395,56 @@ function MemoryWorkspace() {
   ]);
 }
 
+function FilesWorkspace() {
+  const project = getActiveProject();
+  const workspace = projectWorkspaceLabel(project);
+  const files = state.files;
+  const canPickDirectory = "showDirectoryPicker" in window;
+  const needsLoad = project && files.projectId !== project.id && !files.loading;
+  if (needsLoad) window.setTimeout(() => loadFilesForActiveProject(), 0);
+
+  return el("section", { class: "workspace-view files-workspace" }, [
+    TitleRow("Workspace Directory", "Files", [
+      button("Reconnect Workspace", "secondary", () => reconnectWorkspace(project?.id), !project || !canPickDirectory),
+    ]),
+    el("div", { class: "session-context-row" }, [
+      infoPill("Project", projectName(project)),
+      infoPill("Workspace", workspace || "Not connected"),
+    ]),
+    !canPickDirectory
+      ? EmptyState("This browser does not support the File System Access API.")
+      : files.loading
+        ? EmptyState("Reading workspace folder...")
+        : files.error
+          ? el("div", { class: "empty-state" }, [
+            el("p", {}, files.error),
+            button("Reconnect Workspace", "primary", () => reconnectWorkspace(project?.id), !project),
+          ])
+          : files.tree
+            ? FileTree(files.tree)
+            : el("div", { class: "empty-state" }, [
+              el("p", {}, "No workspace folder is connected for this project."),
+              button("Reconnect Workspace", "primary", () => reconnectWorkspace(project?.id), !project),
+            ]),
+  ]);
+}
+
+function FileTree(root) {
+  return el("div", { class: "file-tree-panel" }, [
+    el("div", { class: "file-tree-root" }, root.name),
+    FileTreeList(root.children || []),
+  ]);
+}
+
+function FileTreeList(items) {
+  return el("ul", { class: "file-tree-list" }, items.map((item) =>
+    el("li", { class: `file-tree-item ${item.kind}` }, [
+      el("span", {}, `${item.kind === "directory" ? "folder" : "file"} / ${item.name}`),
+      item.children?.length ? FileTreeList(item.children) : null,
+    ]),
+  ));
+}
+
 function ContextCard(title, lines) {
   return el("article", { class: "context-card" }, [
     el("h2", {}, title),
@@ -363,18 +464,48 @@ function EmptyState(text) {
 }
 
 async function createProject() {
-  const title = prompt("Project name", "New Project");
-  if (!title) return;
-  applyWorkspace(await apiPost("/api/projects", { title }));
+  let handle = null;
+  let name = "";
+  if ("showDirectoryPicker" in window) {
+    try {
+      handle = await window.showDirectoryPicker();
+      name = handle.name || "New Project";
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      showToast(`Unable to select workspace: ${error.message}`);
+      return;
+    }
+  } else {
+    name = prompt("Project name", "New Project")?.trim() || "";
+    if (!name) return;
+    showToast("This browser does not support folder selection. Project created without a workspace folder.");
+  }
+
+  const payload = await apiPost("/api/projects", {
+    name,
+    title: name,
+    workspaceName: handle?.name || "",
+    workspaceDisplayPath: handle?.name || "",
+  });
+  applyWorkspace(payload);
+  if (handle && state.activeProjectId) {
+    state.workspaceHandles.set(state.activeProjectId, handle);
+    try {
+      await saveWorkspaceHandle(state.activeProjectId, handle);
+    } catch (error) {
+      showToast(`Workspace folder is connected for this tab, but could not be saved: ${error.message}`);
+    }
+  }
   render();
+  if (state.activeTab === "files") loadFilesForActiveProject();
 }
 
 async function renameProject(projectId) {
   const project = state.projects.find((item) => item.id === projectId);
   if (!project) return;
-  const title = prompt("Rename Project", project.title)?.trim();
-  if (!title || title === project.title) return;
-  applyWorkspace(await apiPatch(`/api/projects/${encodeURIComponent(projectId)}`, { title }));
+  const name = prompt("Rename Project", projectName(project))?.trim();
+  if (!name || name === projectName(project)) return;
+  applyWorkspace(await apiPatch(`/api/projects/${encodeURIComponent(projectId)}`, { name, title: name }));
   render();
 }
 
@@ -387,7 +518,165 @@ async function deleteProject(projectId) {
     : "Delete this project?";
   if (!confirm(message)) return;
   applyWorkspace(await apiDelete(`/api/projects/${encodeURIComponent(projectId)}`));
+  state.workspaceHandles.delete(projectId);
   render();
+}
+
+async function reconnectWorkspace(projectId) {
+  const project = state.projects.find((item) => item.id === projectId) || getActiveProject();
+  if (!project || !("showDirectoryPicker" in window)) return;
+  let handle = null;
+  try {
+    handle = await window.showDirectoryPicker();
+  } catch (error) {
+    if (error.name !== "AbortError") showToast(`Unable to select workspace: ${error.message}`);
+    return;
+  }
+  state.workspaceHandles.set(project.id, handle);
+  try {
+    await saveWorkspaceHandle(project.id, handle);
+  } catch (error) {
+    showToast(`Workspace folder is connected for this tab, but could not be saved: ${error.message}`);
+  }
+  applyWorkspace(await apiPatch(`/api/projects/${encodeURIComponent(project.id)}`, {
+    workspaceName: handle.name || "",
+    workspaceDisplayPath: handle.name || "",
+  }));
+  render();
+  loadFilesForActiveProject();
+}
+
+async function loadFilesForActiveProject() {
+  const project = getActiveProject();
+  if (!project) return;
+  if (!("showDirectoryPicker" in window)) {
+    state.files = {
+      projectId: project.id,
+      loading: false,
+      error: "This browser does not support the File System Access API.",
+      tree: null,
+      needsReconnect: true,
+    };
+    render();
+    return;
+  }
+
+  state.files = { projectId: project.id, loading: true, error: "", tree: null, needsReconnect: false };
+  render();
+  try {
+    const handle = await getWorkspaceHandle(project.id);
+    if (!handle) {
+      state.files = { projectId: project.id, loading: false, error: "", tree: null, needsReconnect: true };
+      render();
+      return;
+    }
+    const permitted = await ensureReadPermission(handle);
+    if (!permitted) {
+      state.files = {
+        projectId: project.id,
+        loading: false,
+        error: "Workspace permission is unavailable. Reconnect the workspace folder.",
+        tree: null,
+        needsReconnect: true,
+      };
+      render();
+      return;
+    }
+    const counter = { count: 0 };
+    const children = await readDirectoryTree(handle, 0, counter);
+    state.files = {
+      projectId: project.id,
+      loading: false,
+      error: "",
+      tree: { name: handle.name || projectWorkspaceLabel(project) || projectName(project), kind: "directory", children },
+      needsReconnect: false,
+    };
+  } catch (error) {
+    state.files = {
+      projectId: project.id,
+      loading: false,
+      error: `Unable to read workspace folder: ${error.message}`,
+      tree: null,
+      needsReconnect: true,
+    };
+  }
+  render();
+}
+
+async function getWorkspaceHandle(projectId) {
+  if (state.workspaceHandles.has(projectId)) return state.workspaceHandles.get(projectId);
+  const handle = await loadWorkspaceHandle(projectId);
+  if (handle) state.workspaceHandles.set(projectId, handle);
+  return handle;
+}
+
+async function ensureReadPermission(handle) {
+  if (!handle?.queryPermission) return true;
+  const options = { mode: "read" };
+  if ((await handle.queryPermission(options)) === "granted") return true;
+  if (!handle.requestPermission) return false;
+  return (await handle.requestPermission(options)) === "granted";
+}
+
+async function readDirectoryTree(handle, depth, counter) {
+  if (depth >= FILE_TREE_MAX_DEPTH || counter.count >= FILE_TREE_MAX_ITEMS) return [];
+  const entries = [];
+  for await (const entry of handle.values()) {
+    if (counter.count >= FILE_TREE_MAX_ITEMS) break;
+    entries.push(entry);
+  }
+  entries.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  const items = [];
+  for (const entry of entries) {
+    if (counter.count >= FILE_TREE_MAX_ITEMS) break;
+    counter.count += 1;
+    const item = { name: entry.name, kind: entry.kind };
+    if (entry.kind === "directory") item.children = await readDirectoryTree(entry, depth + 1, counter);
+    items.push(item);
+  }
+  return items;
+}
+
+function openWorkspaceDb() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("IndexedDB is unavailable"));
+      return;
+    }
+    const request = indexedDB.open(WORKSPACE_DB, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(WORKSPACE_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Unable to open workspace database"));
+  });
+}
+
+async function saveWorkspaceHandle(projectId, handle) {
+  const db = await openWorkspaceDb();
+  await idbRequest(db.transaction(WORKSPACE_STORE, "readwrite").objectStore(WORKSPACE_STORE).put(handle, projectId));
+  db.close();
+}
+
+async function loadWorkspaceHandle(projectId) {
+  try {
+    const db = await openWorkspaceDb();
+    const handle = await idbRequest(db.transaction(WORKSPACE_STORE, "readonly").objectStore(WORKSPACE_STORE).get(projectId));
+    db.close();
+    return handle || null;
+  } catch {
+    return null;
+  }
+}
+
+function idbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB request failed"));
+  });
 }
 
 async function createSessionTree(projectId) {
@@ -453,6 +742,7 @@ async function selectSession(sessionId) {
   if (!sessionId) return;
   applyWorkspace(await apiPost(`/api/session-nodes/${encodeURIComponent(sessionId)}/select`, {}));
   render();
+  if (state.activeTab === "files") loadFilesForActiveProject();
 }
 
 async function sendComposerMessage(event) {
@@ -557,7 +847,7 @@ function handleSseEvent(chunk, sessionId, assistantId) {
       tool.output = payload.content || payload.output || "";
     }
   }
-  render();
+  scheduleRender();
   return {};
 }
 
@@ -663,7 +953,7 @@ function getTreeMemoryForActiveTree() {
 
 function getKnowledgeForActiveContext() {
   if (state.longTermKnowledgeItems.length) return state.longTermKnowledgeItems;
-  const project = getActiveProject()?.title || "PrismX";
+  const project = projectName(getActiveProject()) || "PrismX";
   const session = getActiveSession()?.title || "current Session";
   return [
     { title: "Project knowledge", content: `${project} uses Tree-Guided Memory to keep task context structured.` },
@@ -779,8 +1069,13 @@ function projectRowAction(label, title, onClick) {
   }, label);
 }
 
-function button(label, variant, onClick) {
-  return el("button", { class: `btn ${variant}`, type: "button", onclick: onClick }, label);
+function button(label, variant, onClick, disabled = false) {
+  return el("button", {
+    class: `btn ${variant}`,
+    type: "button",
+    disabled: disabled ? "disabled" : null,
+    onclick: disabled ? null : onClick,
+  }, label);
 }
 
 function iconButton(label, title, onClick) {
@@ -885,7 +1180,7 @@ function el(tag, attrs = {}, children = []) {
     : document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
     if (value === null || value === undefined || value === false) continue;
-    if (key === "class") node.className = value;
+    if (key === "class") node.setAttribute("class", value);
     else if (key === "style") node.setAttribute("style", value);
     else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value);
     else node.setAttribute(key, value === true ? "" : String(value));

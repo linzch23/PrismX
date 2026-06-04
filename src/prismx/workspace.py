@@ -39,13 +39,24 @@ class WorkspaceStore:
             self._save(data)
         return self._expanded_payload(data)
 
-    def create_project(self, title: str) -> dict[str, Any]:
+    def create_project(
+        self,
+        title: str | None = None,
+        *,
+        name: str | None = None,
+        workspace_name: str | None = None,
+        workspace_display_path: str | None = None,
+    ) -> dict[str, Any]:
         data = self._load()
         now = _now()
+        project_name = self._project_name({"name": name, "title": title}) or "New Project"
         project = {
             "id": _new_id("project"),
-            "title": title.strip() or "New Project",
+            "name": project_name,
+            "title": project_name,
             "treeIds": [],
+            "workspaceName": str(workspace_name or "").strip(),
+            "workspaceDisplayPath": str(workspace_display_path or "").strip(),
             "createdAt": now,
             "updatedAt": now,
         }
@@ -57,9 +68,19 @@ class WorkspaceStore:
     def update_project(self, project_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         data = self._load()
         project = self._project(data, project_id)
-        title = str(updates.get("title") or "").strip()
+        changed = False
+        title = self._project_name(updates)
         if title:
+            project["name"] = title
             project["title"] = title
+            changed = True
+        if "workspaceName" in updates:
+            project["workspaceName"] = str(updates.get("workspaceName") or "").strip()
+            changed = True
+        if "workspaceDisplayPath" in updates:
+            project["workspaceDisplayPath"] = str(updates.get("workspaceDisplayPath") or "").strip()
+            changed = True
+        if changed:
             project["updatedAt"] = _now()
         self._save(data)
         return self._expanded_payload(data)
@@ -279,8 +300,11 @@ class WorkspaceStore:
             "projects": [
                 {
                     "id": project_id,
+                    "name": "PrismX Workspace",
                     "title": "PrismX Workspace",
                     "treeIds": [],
+                    "workspaceName": "",
+                    "workspaceDisplayPath": "",
                     "createdAt": now,
                     "updatedAt": now,
                 }
@@ -303,13 +327,32 @@ class WorkspaceStore:
             now = _now()
             project_id = _new_id("project")
             data["projects"].append(
-                {"id": project_id, "title": "PrismX Workspace", "treeIds": [], "createdAt": now, "updatedAt": now}
+                {
+                    "id": project_id,
+                    "name": "PrismX Workspace",
+                    "title": "PrismX Workspace",
+                    "treeIds": [],
+                    "workspaceName": "",
+                    "workspaceDisplayPath": "",
+                    "createdAt": now,
+                    "updatedAt": now,
+                }
             )
             data["activeProjectId"] = project_id
+        for project in data["projects"]:
+            title = self._project_name(project) or "Untitled Project"
+            project["name"] = title
+            project["title"] = str(project.get("title") or title)
+            project.setdefault("treeIds", [])
+            project.setdefault("workspaceName", "")
+            project.setdefault("workspaceDisplayPath", "")
         data.setdefault("activeProjectId", data["projects"][0]["id"] if data["projects"] else None)
         data.setdefault("activeTreeId", data["sessionTrees"][0]["id"] if data["sessionTrees"] else None)
         data.setdefault("activeSessionId", None)
         return data
+
+    def _project_name(self, payload: dict[str, Any]) -> str:
+        return str(payload.get("name") or payload.get("title") or "").strip()
 
     def _sync_sessions(self, data: dict[str, Any]) -> bool:
         changed = False

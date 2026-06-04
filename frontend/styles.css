@@ -113,7 +113,7 @@ p {
 .brand-block span {
   display: block;
   overflow: hidden;
-  max-width: 58vw;
+  max-width: 64vw;
   color: var(--muted);
   font-size: 12px;
   line-height: 16px;
@@ -303,6 +303,7 @@ p {
   background: var(--primary);
 }
 
+.project-copy,
 .project-button strong,
 .tree-link strong,
 .tree-link small {
@@ -311,8 +312,23 @@ p {
   white-space: nowrap;
 }
 
+.project-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
 .project-button strong {
   font-size: 13px;
+}
+
+.project-button small {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-button em {
@@ -464,8 +480,12 @@ p {
 .message-list {
   display: grid;
   gap: 12px;
+  min-height: 0;
+  max-height: calc(100vh - 310px);
   max-width: 980px;
+  overflow-y: auto;
   padding-bottom: 14px;
+  padding-right: 3px;
 }
 
 .message-card,
@@ -626,7 +646,7 @@ p {
   width: 100%;
   height: 100%;
   overflow: visible;
-  pointer-events: none;
+  pointer-events: auto;
   transform-origin: 0 0;
 }
 
@@ -634,14 +654,21 @@ p {
   fill: none;
   stroke: #cbd5e1;
   stroke-linecap: round;
-  stroke-width: 2.2;
-  filter: drop-shadow(0 2px 4px rgb(15 23 42 / 0.08));
+  stroke-width: 2;
+  opacity: 0.7;
+  pointer-events: stroke;
+  transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease;
+}
+
+.tree-edges path:hover {
+  stroke: #94a3b8;
+  stroke-width: 2.5;
 }
 
 .tree-edges path.active {
-  stroke: #3b82f6;
-  stroke-width: 3.4;
-  filter: drop-shadow(0 3px 6px rgb(59 130 246 / 0.24));
+  stroke: #6366f1;
+  stroke-width: 3;
+  opacity: 1;
 }
 
 .tree-plane {
@@ -749,6 +776,49 @@ p {
   font-size: 14px;
   line-height: 21px;
   overflow-wrap: anywhere;
+}
+
+.file-tree-panel {
+  max-width: 980px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+  padding: 14px;
+}
+
+.file-tree-root {
+  margin-bottom: 10px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.file-tree-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  list-style: none;
+}
+
+.file-tree-item {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.file-tree-item.directory > span {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.file-tree-item.file > span {
+  color: var(--muted);
+}
+
+.file-tree-item .file-tree-list {
+  margin-top: 4px;
 }
 
 .empty-view,

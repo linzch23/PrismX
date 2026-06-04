@@ -116,12 +116,28 @@ class WorkspaceStoreTests(unittest.TestCase):
 
     def test_project_rename_and_delete_repair_selection(self) -> None:
         first_project = self.store.payload()["activeProjectId"]
-        second_project = self.store.create_project("Second")["activeProjectId"]
+        second_project = self.store.create_project(
+            name="Second",
+            workspace_name="Algorithms",
+            workspace_display_path="Algorithms",
+        )["activeProjectId"]
         self.store.create_session_tree(second_project, "Second Tree")
 
-        renamed = self.store.update_project(second_project, {"title": "Renamed Project"})
+        created_project = next(item for item in self.store.payload()["projects"] if item["id"] == second_project)
+        self.assertEqual(created_project["title"], "Second")
+        self.assertEqual(created_project["name"], "Second")
+        self.assertEqual(created_project["workspaceName"], "Algorithms")
+        self.assertEqual(created_project["workspaceDisplayPath"], "Algorithms")
+
+        renamed = self.store.update_project(
+            second_project,
+            {"name": "Renamed Project", "workspaceName": "Graphs", "workspaceDisplayPath": "Graphs"},
+        )
         project = next(item for item in renamed["projects"] if item["id"] == second_project)
         self.assertEqual(project["title"], "Renamed Project")
+        self.assertEqual(project["name"], "Renamed Project")
+        self.assertEqual(project["workspaceName"], "Graphs")
+        self.assertEqual(project["workspaceDisplayPath"], "Graphs")
 
         deleted = self.store.delete_project(second_project)
         self.assertEqual(deleted["activeProjectId"], first_project)
