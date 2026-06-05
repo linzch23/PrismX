@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -123,6 +124,8 @@ class AgentApp:
             self.context_gateway,
             limit=runtime_limit,
             max_chars=runtime_chars,
+            client=self.client,
+            model=self.model,
         )
         self.working_set_builder = WorkingSetBuilder(self.tree)
         self.last_working_set: WorkingSet | None = None
@@ -222,6 +225,24 @@ class AgentApp:
         workspace_context: str | None = None,
     ) -> str:
         self.tree.append_message(self.session_id, {"role": "user", "content": user_input})
+        try:
+            event = self.tree_memory.record_event(
+                self.active_tree_id,
+                "user",
+                user_input,
+                session_id=self.session_id,
+                actor="user",
+            )
+            evidence = self.tree_memory.store_evidence(
+                self.active_tree_id,
+                "note",
+                user_input,
+                title="User message",
+                source_event_id=event.id,
+            )
+            event.evidence_ids.append(evidence.id)
+        except Exception:
+            pass
         debug = self.tree.debugBuildModelContext(self.session_id)
         runtime_context = self.runtime_context_builder.build(
             user_input,
@@ -257,11 +278,53 @@ class AgentApp:
                 self.session_id,
                 {"id": block.id, "name": block.name, "input": block.input},
             )
+            try:
+                event = self.tree_memory.record_event(
+                    self.active_tree_id,
+                    "tool_call",
+                    f"{block.name}: {block.input}",
+                    session_id=self.session_id,
+                    actor="agent",
+                    metadata={"tool_call_id": block.id, "tool": block.name},
+                )
+                evidence = self.tree_memory.store_evidence(
+                    self.active_tree_id,
+                    "code_snippet",
+                    json_dumps_safe(block.input),
+                    title=f"Tool call: {block.name}",
+                    source_event_id=event.id,
+                    metadata={"tool_call_id": block.id, "tool": block.name},
+                )
+                event.evidence_ids.append(evidence.id)
+            except Exception:
+                pass
             if on_tool_call:
                 on_tool_call(block)
 
         def record_tool_result(result: dict[str, str]) -> None:
             self.tree.append_tool_result(self.session_id, result)
+            try:
+                content = str(result.get("content") or result)
+                evidence_type = "error_log" if str(result.get("is_error") or "").lower() == "true" else "command_output"
+                event = self.tree_memory.record_event(
+                    self.active_tree_id,
+                    "tool_result",
+                    content,
+                    session_id=self.session_id,
+                    actor="tool",
+                    metadata={"tool_use_id": result.get("tool_use_id", "")},
+                )
+                evidence = self.tree_memory.store_evidence(
+                    self.active_tree_id,
+                    evidence_type,
+                    content,
+                    title="Tool result",
+                    source_event_id=event.id,
+                    metadata={"tool_use_id": result.get("tool_use_id", "")},
+                )
+                event.evidence_ids.append(evidence.id)
+            except Exception:
+                pass
             if on_tool_result:
                 on_tool_result(result)
 
@@ -280,6 +343,23 @@ class AgentApp:
             + self.tree.buildModelContext(self.session_id),
         )
         self.history = self.tree.buildModelContext(self.session_id)
+        try:
+            event = self.tree_memory.record_event(
+                self.active_tree_id,
+                "assistant",
+                reply,
+                session_id=self.session_id,
+                actor="assistant",
+            )
+            self.tree_memory.store_evidence(
+                self.active_tree_id,
+                "note",
+                reply,
+                title="Assistant reply",
+                source_event_id=event.id,
+            )
+        except Exception:
+            pass
 
         # auto-compact when context usage exceeds threshold
         if self.tokens.should_compact(self.max_context_tokens, self.compact_threshold):
@@ -364,3 +444,10 @@ def _active_path_summary(debug: dict[str, Any]) -> str:
         "Raw active path messages are supplied separately as model messages; "
         "this section records the retrieval path used by TGM."
     )
+
+
+def json_dumps_safe(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    except TypeError:
+        return str(value)

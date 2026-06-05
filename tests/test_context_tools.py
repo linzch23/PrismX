@@ -117,7 +117,7 @@ class RememberToolUpgradeTests(unittest.TestCase):
 
         result = tool.execute(note="记住暗号123123", memory_type="user_profile", title="暗号")
 
-        self.assertIn("tree://s1/memory/", result)
+        self.assertIn("tree://s1/fold/", result)
         self.assertIn("mem://user/", result)
         self.assertEqual(len(tree_memory.items("s1")), 1)
 

@@ -16,14 +16,16 @@ TREE_TO_KNOWLEDGE_CATEGORY = {
 }
 
 TREE_TO_LONG_TERM_TYPE = {
-    "conclusion": "project",
-    "decision": "project",
+    "conclusion": "pattern",
+    "decision": "pattern",
     "constraint": "project",
     "todo": "project",
     "finding": "project",
     "fact": "project",
-    "hypothesis": "project",
-    "discarded_option": "project",
+    "hypothesis": "pattern",
+    "discarded_option": "pattern",
+    "failure": "pattern",
+    "partial_fix": "pattern",
 }
 
 
@@ -45,7 +47,9 @@ class KnowledgeCompiler:
                     "category": category,
                     "type": TREE_TO_LONG_TERM_TYPE.get(item.memory_type, "project"),
                     "source_tree_id": item.tree_id,
+                    "source_fold_id": item.id,
                     "source_memory_id": item.id,
+                    "source_evidence_ids": list(getattr(item, "evidence_ids", []) or []),
                     "key": _key(item),
                     "title": item.title,
                     "abstract": item.content[:180],
@@ -75,6 +79,7 @@ def _key(item: TreeMemoryItem) -> str:
 
 
 def _content(item: TreeMemoryItem) -> str:
+    metadata = getattr(item, "metadata", {}) or {}
     return "\n".join(
         [
             item.content,
@@ -82,8 +87,9 @@ def _content(item: TreeMemoryItem) -> str:
             "## Tree Memory Source",
             f"- tree_id: {item.tree_id}",
             f"- source_session_id: {item.source_session_id or '(unknown)'}",
-            f"- source_branch: {item.source_branch or '(unknown)'}",
-            f"- source_entry_id: {item.source_entry_id or '(unknown)'}",
+            f"- source_branch: {metadata.get('source_branch') or '(unknown)'}",
+            f"- source_entry_id: {metadata.get('source_entry_id') or '(unknown)'}",
+            f"- evidence_ids: {', '.join(getattr(item, 'evidence_ids', []) or []) or '(none)'}",
             f"- reuse_count: {item.reuse_count}",
         ]
     )

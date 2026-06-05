@@ -128,6 +128,20 @@ def _handler_factory(state: WebState):
                     with state.lock:
                         self._send_json(memory_payload(state.app.memory.memory_dir))
                     return
+                evidence_route = _memory_evidence_route(path)
+                if evidence_route:
+                    with state.lock:
+                        tree_id = str(_workspace_payload(state).get("activeTreeId") or state.app.active_tree_id)
+                        evidence = state.app.tree_memory.evidence(tree_id, evidence_route)
+                        if evidence is None:
+                            raise KeyError(f"evidence not found: {evidence_route}")
+                        self._send_json({"evidence": _plain_data(evidence), "content": state.app.tree_memory.read_evidence(evidence)})
+                    return
+                if path == "/api/memory/status":
+                    with state.lock:
+                        tree_id = str(_workspace_payload(state).get("activeTreeId") or state.app.active_tree_id)
+                        self._send_json(state.app.tree_memory.status(tree_id))
+                    return
                 if path == "/api/mcp":
                     with state.lock:
                         self._send_json({"report": state.app.mcp.report()})
@@ -180,6 +194,35 @@ def _handler_factory(state: WebState):
                         workspace = state.workspace.create_session_node(tree_id, parent_id, title)
                         state.select_session(str(workspace["activeSessionId"]))
                         self._send_json(_workspace_payload(state), status=HTTPStatus.CREATED)
+                        return
+                    if path == "/api/memory/fold":
+                        tree_id = str(payload.get("treeId") or _workspace_payload(state).get("activeTreeId") or state.app.active_tree_id)
+                        fold = state.app.tree_memory.fold_trace_events(
+                            tree_id,
+                            title=str(payload.get("title") or "Manual Memory Fold"),
+                        )
+                        self._send_json({"fold": _plain_data(fold), "workspace": _workspace_payload(state)})
+                        return
+                    if path == "/api/memory/retrieve":
+                        tree_id = str(payload.get("treeId") or _workspace_payload(state).get("activeTreeId") or state.app.active_tree_id)
+                        query = str(payload.get("query") or "").strip()
+                        self._send_json({"items": state.app.tree_memory.search(tree_id, query, limit=int(payload.get("limit") or 5))})
+                        return
+                    if path == "/api/memory/promote":
+                        tree_id = str(payload.get("treeId") or _workspace_payload(state).get("activeTreeId") or state.app.active_tree_id)
+                        fold_id = str(payload.get("foldId") or "").strip()
+                        fold = state.app.tree_memory.fold_by_id(tree_id, fold_id)
+                        if fold is None:
+                            raise KeyError(f"fold not found: {fold_id}")
+                        uri = state.app.memory.promote_tree_memory(fold, memory_type=str(payload.get("type") or "pattern"))
+                        if uri:
+                            state.app.tree_memory.mark_promoted(tree_id, fold.id)
+                        self._send_json({"uri": uri, "workspace": _workspace_payload(state)})
+                        return
+                    if path == "/api/memory/rollback-plan":
+                        tree_id = str(payload.get("treeId") or _workspace_payload(state).get("activeTreeId") or state.app.active_tree_id)
+                        fold_id = str(payload.get("foldId") or "").strip()
+                        self._send_json(state.app.tree_memory.rollback_plan(tree_id, fold_id))
                         return
                     node_route = _session_node_route(path)
                     if node_route and node_route[1] == "select":
@@ -497,6 +540,13 @@ def _session_tree_route(path: str) -> str | None:
     return None
 
 
+def _memory_evidence_route(path: str) -> str | None:
+    parts = [unquote(part) for part in path.strip("/").split("/") if part]
+    if len(parts) == 4 and parts[:3] == ["api", "memory", "evidence"]:
+        return parts[3]
+    return None
+
+
 def _session_resource_payload(
     state: WebState,
     session_id: str,
@@ -685,8 +735,10 @@ def _tree_memory_items(objects: list[Any]) -> list[dict[str, Any]]:
                         or metadata.get("source_branch")
                         or ""
                     ),
-                    "type": str(item.get("memory_type") or metadata.get("memory_type") or item.get("type") or context_type or "finding"),
+                    "type": str(item.get("memory_type") or metadata.get("memory_type") or metadata.get("node_type") or item.get("type") or context_type or "finding"),
                     "content": str(item.get("overview") or item.get("content") or item.get("title") or uri),
+                    "foldId": str(metadata.get("fold_id") or item.get("fold_id") or ""),
+                    "evidenceIds": list(metadata.get("evidence_ids") or item.get("evidence_ids") or []),
                     "reuseCount": int(metadata.get("reuse_count") or item.get("reuse_count") or 0),
                     "confidence": float(metadata.get("confidence") or item.get("trust_score") or item.get("confidence") or 0.0),
                     "status": str(metadata.get("status") or item.get("status") or "active"),
@@ -713,7 +765,9 @@ def _knowledge_items(objects: list[Any]) -> list[dict[str, Any]]:
                     "content": str(item.get("overview") or item.get("content") or ""),
                     "type": str(metadata.get("type") or metadata.get("knowledge_type") or item.get("type") or ""),
                     "sourceTreeId": str(metadata.get("source_tree_id") or ""),
-                    "sourceMemoryId": str(metadata.get("source_memory_id") or ""),
+                    "sourceMemoryId": str(metadata.get("source_memory_id") or metadata.get("source_fold_id") or ""),
+                    "sourceFoldId": str(metadata.get("source_fold_id") or metadata.get("source_memory_id") or ""),
+                    "sourceEvidenceIds": list(metadata.get("source_evidence_ids") or []),
                     "confidence": float(metadata.get("confidence") or item.get("trust_score") or 0.0),
                     "status": str(metadata.get("status") or item.get("status") or "active"),
                     "createdAt": str(item.get("created_at") or item.get("createdAt") or ""),

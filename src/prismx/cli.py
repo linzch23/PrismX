@@ -41,6 +41,12 @@ TGM Memory:
   /memory
   /memory add TYPE CONTENT
   /memory delete ID
+  /memory fold
+  /memory retrieve QUERY
+  /memory promote FOLD_ID --type pattern
+  /memory evidence EVIDENCE_ID
+  /memory rollback FOLD_ID
+  /memory status
 
   /recall
   /working-context
@@ -198,11 +204,72 @@ def handle_command(app: AgentApp, workspace: WorkspaceStore, command: str) -> bo
                 content,
                 category=LONG_TERM_SPECIAL_CATEGORY_MAP[memory_type],
                 source_tree_id=str(tree_id),
-                source_memory_id=uri.rstrip("/").rsplit("/", 1)[-1],
+                source_fold_id=uri.rstrip("/").rsplit("/", 1)[-1],
+                source_evidence_ids=_fold_evidence_ids(app, str(tree_id), uri),
             )
             print(f"Tree Memory added: {uri}\nLong-term Knowledge added: {long_uri}\n")
             return True
         print(f"Tree Memory added: {uri}\n")
+        return True
+    if command == "/memory fold":
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        if not tree_id:
+            print("No active SessionTree.\n")
+            return True
+        fold = app.tree_memory.fold_trace_events(str(tree_id), title="Manual Memory Fold")
+        print((f"Folded Tree Memory: {fold.uri}" if fold else "No trace events to fold.") + "\n")
+        return True
+    if command.startswith("/memory retrieve "):
+        query = command.removeprefix("/memory retrieve ").strip()
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        if not tree_id:
+            print("No active SessionTree.\n")
+            return True
+        hits = app.tree_memory.search(str(tree_id), query, limit=5)
+        print((_render_context_hits(hits) if hits else "No Tree Memory hits.") + "\n")
+        return True
+    if command.startswith("/memory promote "):
+        rest = command.removeprefix("/memory promote ").strip()
+        parts = rest.split()
+        fold_id = parts[0] if parts else ""
+        memory_type = "pattern"
+        if "--type" in parts:
+            idx = parts.index("--type")
+            if idx + 1 < len(parts):
+                memory_type = parts[idx + 1]
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        fold = app.tree_memory.fold_by_id(str(tree_id), fold_id) if tree_id and fold_id else None
+        if fold is None:
+            print("Folded Tree Memory not found.\n")
+            return True
+        uri = app.memory.promote_tree_memory(fold, memory_type=memory_type)
+        if uri:
+            app.tree_memory.mark_promoted(str(tree_id), fold.id)
+        print((f"Long-term Knowledge promoted: {uri}" if uri else "Promotion failed.") + "\n")
+        return True
+    if command.startswith("/memory evidence "):
+        evidence_id = command.removeprefix("/memory evidence ").strip().rsplit("/", 1)[-1]
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        evidence = app.tree_memory.evidence(str(tree_id), evidence_id) if tree_id else None
+        print((app.tree_memory.read_evidence(evidence) if evidence else "Evidence not found.") + "\n")
+        return True
+    if command.startswith("/memory rollback "):
+        fold_id = command.removeprefix("/memory rollback ").strip().rsplit("/", 1)[-1]
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        if not tree_id:
+            print("No active SessionTree.\n")
+            return True
+        print(json.dumps(app.tree_memory.rollback_plan(str(tree_id), fold_id), ensure_ascii=False, indent=2) + "\n")
+        return True
+    if command == "/memory status":
+        payload = workspace.payload()
+        tree_id = payload.get("activeTreeId")
+        print(json.dumps(app.tree_memory.status(str(tree_id)) if tree_id else {}, ensure_ascii=False, indent=2) + "\n")
         return True
     if command.startswith("/memory delete "):
         item_id = command.removeprefix("/memory delete ").strip().rsplit("/", 1)[-1]
@@ -354,6 +421,16 @@ def _knowledge(app: AgentApp) -> str:
     if not items:
         return "No Long-term Knowledge."
     return "\n".join(f"- {item.get('uri')} {item.get('title', '')}" for item in items)
+
+
+def _render_context_hits(hits: list[dict[str, Any]]) -> str:
+    return "\n".join(f"- {item.get('uri')} {item.get('title')}: {item.get('abstract')}" for item in hits)
+
+
+def _fold_evidence_ids(app: AgentApp, tree_id: str, uri: str) -> list[str]:
+    fold_id = uri.rstrip("/").rsplit("/", 1)[-1]
+    fold = app.tree_memory.fold_by_id(tree_id, fold_id)
+    return list(getattr(fold, "evidence_ids", []) or []) if fold else []
 
 
 def _agent_state(app: AgentApp, workspace: WorkspaceStore) -> str:

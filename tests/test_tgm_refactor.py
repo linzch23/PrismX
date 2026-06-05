@@ -29,7 +29,8 @@ class TreeMemoryTests(unittest.TestCase):
             source_branch=prim,
             confidence=0.9,
         )
-        self.assertTrue((tmp / "data" / "tree_memory" / f"{sid}.jsonl").exists())
+        self.assertTrue((tmp / "data" / "tree_memory" / sid / "folded_nodes.jsonl").exists())
+        self.assertTrue((tmp / "data" / "tree_memory" / sid / "trace_events.jsonl").exists())
         self.assertFalse((tmp / "memory" / "tree" / f"{sid}.jsonl").exists())
 
         tree.jumpToEntry(sid, root)
@@ -39,7 +40,7 @@ class TreeMemoryTests(unittest.TestCase):
         self.assertNotIn("Prim 算法", branch_text)
 
         hits = store.search(sid, "Kruskal 最小生成树 连通图", limit=5)
-        self.assertTrue(any(hit["uri"].startswith("tree://default/memory/") for hit in hits))
+        self.assertTrue(any(hit["uri"].startswith("tree://default/fold/") for hit in hits))
         self.assertIn("连通无向图", hits[0]["overview"])
         self.assertNotEqual(kruskal, prim)
 
@@ -81,10 +82,10 @@ class TgmContextGatewayTests(unittest.TestCase):
             scope="long_term",
         )
 
-        self.assertTrue(tree_uri.startswith("tree://s1/memory/"))
-        self.assertIn("tree://s1/memory/", long_uri)
+        self.assertTrue(tree_uri.startswith("tree://s1/fold/"))
+        self.assertIn("tree://s1/fold/", long_uri)
         self.assertIn("mem://feedback/", long_uri)
-        self.assertTrue((tmp / "data" / "tree_memory" / "s1.jsonl").exists())
+        self.assertTrue((tmp / "data" / "tree_memory" / "s1" / "folded_nodes.jsonl").exists())
         self.assertTrue((tmp / "data" / "knowledge" / "MEMORY.md").exists())
         self.assertIn("简洁实现", gateway.read(tree_uri))
         self.assertTrue(any("摘要" in item.content for item in tree_memory.items("s1")))
@@ -102,12 +103,12 @@ class TgmContextGatewayTests(unittest.TestCase):
 
         uri = gateway.remember("记住暗号123123", title="暗号", memory_type="user_profile")
 
-        self.assertIn("tree://s1/memory/", uri)
+        self.assertIn("tree://s1/fold/", uri)
         self.assertIn("mem://user/", uri)
         self.assertEqual(len(tree_memory.items("s1")), 1)
         self.assertEqual(tree_memory.items("s1")[0].memory_type, "finding")
         self.assertEqual(tree_memory.items("s1")[0].metadata["long_term_special_type"], "user_profile")
-        self.assertTrue((tmp / "data" / "tree_memory" / "s1.jsonl").exists())
+        self.assertTrue((tmp / "data" / "tree_memory" / "s1" / "folded_nodes.jsonl").exists())
         self.assertTrue(any("123123" in item["overview"] for item in gateway.search_tree("暗号123123")))
         self.assertTrue(any("123123" in item["overview"] for item in gateway.search_long_term("暗号123123")))
 
@@ -142,10 +143,10 @@ class TgmRuntimeRecallTests(unittest.TestCase):
             recall_scope={"session_id": "s1"},
         )
 
-        self.assertIn("Active Path Retrieval", text)
-        self.assertIn("Tree Memory Retrieval", text)
-        self.assertIn("Long-term Knowledge Retrieval", text)
-        self.assertIn("tree://s1/memory/", text)
+        self.assertIn("Active Path Context", text)
+        self.assertIn("Tree Memory", text)
+        self.assertIn("Long-term Knowledge", text)
+        self.assertIn("tree://s1/fold/", text)
 
     def test_runtime_recall_promotes_tree_memory_after_three_reuses(self) -> None:
         tmp = make_temp_dir()
@@ -194,7 +195,7 @@ class KnowledgeCompilerTests(unittest.TestCase):
 
         self.assertEqual(len(operations), 1)
         self.assertEqual(operations[0]["category"], "decisions")
-        self.assertEqual(operations[0]["type"], "project")
+        self.assertEqual(operations[0]["type"], "pattern")
         self.assertEqual(operations[0]["source_tree_id"], "default")
         self.assertIn("tree-memory", operations[0]["tags"])
         self.assertEqual(operations[0]["links"][0]["relation"], "derived_from")

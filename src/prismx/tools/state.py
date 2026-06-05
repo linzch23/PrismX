@@ -81,7 +81,7 @@ class RememberTool(Tool):
     description = (
         "Write reusable memory. By default this writes Tree Memory for the current session tree. "
         "Special memory_type values user_profile, user_feedback, project_state, and reference "
-        "write Tree Memory and Long-term Knowledge. Use scope='long_term' to dual-write other durable facts. "
+        "write Tree Memory first and then traceable Long-term Knowledge. Use scope='long_term' to dual-write durable facts. "
         "category: preferences|events|decisions|constraints|cases|patterns|tools|skills|entities|open_tasks|profile"
     )
 
@@ -105,6 +105,9 @@ class RememberTool(Tool):
                     "finding",
                     "hypothesis",
                     "discarded_option",
+                    "fact",
+                    "failure",
+                    "partial_fix",
                     "user_profile",
                     "user_feedback",
                     "project_state",
