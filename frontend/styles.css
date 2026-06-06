@@ -920,6 +920,90 @@ p {
   font-size: 14px;
   line-height: 21px;
   overflow-wrap: anywhere;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.knowledge-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #e0e7ff;
+  color: #3730a3;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.knowledge-link {
+  font-size: 11px;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  color: var(--prism-indigo);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.knowledge-link:hover {
+  color: #4f46e5;
+  text-decoration-style: solid;
+}
+
+.knowledge-conf {
+  font-size: 11px;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  color: var(--amber);
+  white-space: nowrap;
+}
+
+.knowledge-status {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #d1fae5;
+  color: #065f46;
+  white-space: nowrap;
+}
+
+.knowledge-content {
+  font-size: 14px;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.trace-source-link {
+  cursor: pointer;
+  color: var(--prism-indigo);
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 12px;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.trace-source-link:hover {
+  color: #4f46e5;
+  text-decoration-style: solid;
+}
+
+.trace-fold-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #ede9fe;
+  color: #5b21b6;
+  white-space: nowrap;
 }
 
 .file-tree-panel {
@@ -1175,5 +1259,964 @@ p {
 
   .tree-canvas {
     min-height: 480px;
+  }
+}
+
+/* ============================================
+   TGM 3.0 — Evidence Workspace
+   ============================================ */
+.evidence-workspace {
+  background: var(--bg-surface);
+}
+
+.evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  overflow-y: auto;
+  max-height: calc(100vh - 180px);
+}
+
+.evidence-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.evidence-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.evidence-type-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.evidence-card strong {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-card time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.evidence-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.evidence-content {
+  background: var(--bg-code);
+  color: var(--text-code);
+  padding: 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 50vh;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.evidence-modal {
+  max-width: 640px;
+  width: 90vw;
+}
+
+/* ============================================
+   TGM 3.0 — Memory Toolbar & Search
+   ============================================ */
+.memory-toolbar {
+  padding: 0 16px 8px;
+}
+
+.memory-search {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.memory-search-input {
+  flex: 1;
+  padding: 6px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.memory-search-input:focus {
+  border-color: var(--accent);
+}
+
+.context-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.context-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--bg-muted);
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+
+.memory-items-card {
+}
+
+.memory-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* ============================================
+   TGM 3.0 — Memory Item Cards
+   ============================================ */
+.memory-item {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+.memory-item:hover {
+  border-color: var(--accent-dim);
+}
+.memory-item.expanded {
+  border-color: var(--accent);
+}
+
+.memory-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s ease;
+}
+.memory-item-row:hover {
+  background: var(--accent-dim);
+}
+
+.memory-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Type colors */
+.memory-type-badge.type-decision       { background: #dbeafe; color: #1e40af; }
+.memory-type-badge.type-constraint     { background: #fce7f3; color: #9d174d; }
+.memory-type-badge.type-finding        { background: #d1fae5; color: #065f46; }
+.memory-type-badge.type-conclusion     { background: #ede9fe; color: #5b21b6; }
+.memory-type-badge.type-todo           { background: #fef3c7; color: #92400e; }
+.memory-type-badge.type-hypothesis     { background: #e0e7ff; color: #3730a3; }
+.memory-type-badge.type-discarded_option { background: #f3f4f6; color: #6b7280; text-decoration: line-through; }
+.memory-type-badge.type-fact           { background: #ccfbf1; color: #115e59; }
+.memory-type-badge.type-failure        { background: #fee2e2; color: #991b1b; }
+.memory-type-badge.type-partial_fix    { background: #ffedd5; color: #9a3412; }
+
+.memory-item-content {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.memory-item-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.memory-status {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.memory-status.status-active    { background: #d1fae5; color: #065f46; }
+.memory-status.status-archived  { background: #f3f4f6; color: #6b7280; }
+.memory-status.status-promoted  { background: #ede9fe; color: #5b21b6; }
+.memory-status.status-discarded { background: #fee2e2; color: #991b1b; }
+.memory-status.status-failed    { background: #fee2e2; color: #991b1b; }
+.memory-status.status-partial   { background: #ffedd5; color: #9a3412; }
+
+.memory-heat {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-size: 10px;
+}
+
+.memory-promoted-badge {
+  background: #ede9fe;
+  color: #5b21b6;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.memory-item-expand {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+/* ============================================
+   TGM 3.0 — Memory Item Detail (expanded)
+   ============================================ */
+.memory-item-detail {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-item-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.memory-item-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.evidence-link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: monospace;
+  font-size: 10px;
+}
+.evidence-link:hover {
+  color: var(--accent-hover);
+}
+
+.memory-item-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ============================================
+   TGM 3.0 — Rollback Plan Modal
+   ============================================ */
+.rollback-modal {
+  max-width: 560px;
+  width: 90vw;
+}
+
+.rollback-risk {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #991b1b;
+  margin-bottom: 12px;
+}
+.rollback-risk strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.rollback-section {
+  margin-bottom: 10px;
+}
+.rollback-section h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+}
+.rollback-section ul,
+.rollback-section ol {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text);
+}
+.rollback-section li {
+  margin-bottom: 2px;
+}
+
+/* ============================================
+   TGM 3.0 — Runtime Recall Debug Workspace
+   ============================================ */
+.debug-workspace {
+  background: var(--bg-surface);
+}
+
+.debug-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  max-width: 1120px;
+}
+
+.debug-card {
+  min-height: auto;
+}
+
+.debug-summary-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.debug-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid rgb(148 163 184 / 0.1);
+  font-size: 13px;
+}
+
+.debug-summary-label {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.debug-summary-value {
+  font-weight: 700;
+  color: var(--ink);
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+}
+
+.debug-summary-value.status-included {
+  color: var(--green);
+}
+
+.debug-summary-value.status-excluded {
+  color: var(--amber);
+}
+
+.debug-entries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.debug-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid rgb(148 163 184 / 0.1);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.5);
+  font-size: 12px;
+  transition: border-color 0.15s ease;
+}
+
+.debug-entry:hover {
+  border-color: rgb(99 102 241 / 0.2);
+  background: rgb(255 255 255 / 0.8);
+}
+
+.debug-entry.excluded {
+  border-color: rgb(181 71 8 / 0.15);
+  background: rgb(181 71 8 / 0.04);
+}
+
+.debug-entry.excluded:hover {
+  border-color: rgb(181 71 8 / 0.3);
+  background: rgb(181 71 8 / 0.08);
+}
+
+.debug-entry-id {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 11px;
+  color: var(--prism-indigo);
+  background: rgb(99 102 241 / 0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.debug-entry.excluded .debug-entry-id {
+  color: var(--amber);
+  background: rgb(181 71 8 / 0.06);
+}
+
+.layer-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgb(99 102 241 / 0.08);
+  color: var(--prism-indigo);
+  flex-shrink: 0;
+}
+
+.debug-entry.excluded .layer-badge {
+  background: rgb(181 71 8 / 0.08);
+  color: var(--amber);
+}
+
+.reason-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgb(239 68 68 / 0.08);
+  color: var(--red);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  flex-shrink: 1;
+}
+
+.debug-empty-note {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.context-count-excluded {
+  background: rgb(239 68 68 / 0.1);
+  color: var(--red);
+}
+
+@media (max-width: 920px) {
+  .debug-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================
+   TGM 3.0 — Runtime Recall Debug Panel
+   ============================================ */
+.recall-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  max-width: 1120px;
+  margin-bottom: 18px;
+}
+
+.recall-panel.recall-unavailable {
+  grid-template-columns: 1fr;
+  padding: 16px;
+  border: 1px dashed rgb(99 102 241 / 0.18);
+  border-radius: 14px;
+  background: rgb(99 102 241 / 0.04);
+}
+
+.recall-card {
+  min-height: auto;
+  border-left: 3px solid var(--prism-indigo);
+}
+
+.recall-card.recall-coarse {
+  border-left-color: var(--amber);
+}
+
+.recall-card.recall-intent {
+  border-left-color: var(--prism-purple);
+}
+
+.recall-card.recall-results {
+  border-left-color: var(--prism-cyan);
+  grid-column: 1 / -1;
+}
+
+.recall-card.recall-rendered {
+  border-left-color: var(--green);
+  grid-column: 1 / -1;
+}
+
+.recall-decision-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.recall-decision-badge.needs-yes {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.recall-decision-badge.needs-no {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.recall-reason {
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.4;
+  display: flex;
+  gap: 4px;
+}
+
+.recall-reason strong {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.recall-empty-note {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  margin: 0;
+}
+
+.recall-empty-reason {
+  color: var(--faint);
+  font-size: 11px;
+  margin: 4px 0 0;
+}
+
+.recall-intent-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.recall-intent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.recall-intent-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.recall-intent-value {
+  font-size: 13px;
+  color: var(--ink);
+  font-family: "SF Mono", "Fira Code", monospace;
+  word-break: break-word;
+}
+
+.recall-results-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.recall-layer {
+  border: 1px solid rgb(148 163 184 / 0.12);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.recall-layer-head {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--prism-indigo);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.recall-layer-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.recall-layer-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgb(99 102 241 / 0.04);
+}
+
+.recall-layer-item code {
+  font-size: 10px;
+  color: var(--prism-indigo);
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.recall-layer-item span {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recall-rendered-content {
+  background: rgb(15 23 42 / 0.03);
+  color: var(--ink);
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 380px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "SF Mono", "Fira Code", monospace;
+  margin: 0;
+}
+
+@media (max-width: 920px) {
+  .recall-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .recall-card.recall-results,
+  .recall-card.recall-rendered {
+    grid-column: 1;
+  }
+}
+
+/* ============================================
+   TGM 3.0 — Trace Timeline Workspace
+   ============================================ */
+.trace-workspace {
+  background: var(--bg-surface);
+}
+
+.trace-timeline {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding: 14px 14px 14px 38px;
+  gap: 0;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+
+.trace-timeline::before {
+  content: "";
+  position: absolute;
+  left: 21px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--prism-indigo), var(--prism-cyan), var(--prism-purple));
+  border-radius: 2px;
+  opacity: 0.3;
+}
+
+.trace-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+  padding: 6px 0;
+}
+
+.trace-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / 0.9);
+  flex-shrink: 0;
+  margin-top: 12px;
+  z-index: 1;
+  box-shadow: 0 0 0 3px rgb(99 102 241 / 0.1);
+}
+
+.trace-card {
+  flex: 1;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: var(--glass);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(16px);
+  transition: var(--ease);
+  overflow: hidden;
+}
+
+.trace-card:hover {
+  border-color: rgb(99 102 241 / 0.16);
+  box-shadow: 0 12px 28px rgb(15 23 42 / 0.07);
+  transform: translateY(-1px);
+}
+
+.trace-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  min-height: 44px;
+  user-select: none;
+}
+
+.trace-time {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.trace-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #fff;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 6px rgb(15 23 42 / 0.1);
+}
+
+.trace-title {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.trace-expand {
+  font-size: 10px;
+  color: var(--faint);
+  flex-shrink: 0;
+}
+
+.trace-card-body {
+  padding: 10px 14px 14px;
+  border-top: 1px solid rgb(148 163 184 / 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trace-content {
+  background: rgb(15 23 42 / 0.04);
+  color: var(--ink);
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+}
+
+.trace-loading {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+  margin: 0;
+}
+
+@media (max-width: 920px) {
+  .trace-timeline {
+    padding: 10px 10px 10px 32px;
+  }
+
+  .trace-timeline::before {
+    left: 17px;
+  }
+
+  .trace-card-head {
+    flex-wrap: wrap;
+  }
+}
+
+/* ============================================
+   Knowledge Graph Workspace
+   ============================================ */
+.graph-workspace {
+  background:
+    radial-gradient(circle at 15% 20%, rgb(99 102 241 / 0.06), transparent 30%),
+    radial-gradient(circle at 85% 70%, rgb(6 182 212 / 0.05), transparent 30%);
+}
+
+.graph-count-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid rgb(99 102 241 / 0.12);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.66);
+  color: var(--muted);
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.graph-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.graph-canvas {
+  position: relative;
+  height: min(70vh, 720px);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.66);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 50% 50%, rgb(99 102 241 / 0.04), transparent 40%),
+    linear-gradient(rgb(148 163 184 / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(148 163 184 / 0.05) 1px, transparent 1px),
+    rgb(255 255 255 / 0.58);
+  background-size: auto, 40px 40px, 40px 40px, auto;
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(12px);
+  touch-action: none;
+}
+
+.graph-plane {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.graph-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: auto;
+}
+
+.graph-edge {
+  transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease;
+}
+
+.graph-edge.edge-promoted:hover {
+  stroke: #7c3aed;
+  stroke-width: 3;
+  opacity: 0.9;
+}
+
+.graph-edge.edge-derived:hover {
+  stroke: #64748b;
+  stroke-width: 2;
+  opacity: 0.8;
+}
+
+.graph-node-circle {
+  transition: r 0.15s ease, filter 0.15s ease;
+}
+
+.graph-node-circle:hover {
+  r: 26;
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.25));
+}
+
+.graph-node-label {
+  font-size: 10px;
+  fill: #334155;
+  font-weight: 600;
+  pointer-events: none;
+  text-shadow: 0 1px 0 #fff;
+}
+
+@media (max-width: 920px) {
+  .graph-canvas {
+    min-height: 420px;
+  }
+
+  .graph-workspace {
+    padding: 10px;
   }
 }

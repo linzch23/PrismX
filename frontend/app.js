@@ -25,6 +25,26 @@ const state = {
   sidebarWidth: readSidebarWidth(),
   resizingSidebar: false,
   modal: null,
+  // TGM interactive state
+  memorySearchQuery: "",
+  memorySearchResults: null,
+  rollbackPlan: null,
+  expandedItems: new Set(),
+  evidenceList: [],
+  evidenceLoading: false,
+  evidenceError: "",
+  evidenceModal: null,
+  memoryStatus: null,
+  debugData: null,
+  debugLoading: false,
+  recallData: null,
+  recallLoading: false,
+  traceData: null,
+  traceLoading: false,
+  traceExpanded: new Set(),
+  graphData: null,
+  graphLoading: false,
+  graphView: { x: 0, y: 0, scale: 1 },
 };
 
 const WORKSPACE_DB = "prismx-workspaces";
@@ -66,7 +86,12 @@ function applyWorkspace(payload) {
   state.projects = (payload.projects || []).map(normalizeProject);
   state.sessionTrees = payload.sessionTrees || [];
   state.activeProjectId = payload.activeProjectId || state.projects[0]?.id || null;
-  state.activeTreeId = payload.activeTreeId || state.sessionTrees[0]?.id || null;
+  const newTreeId = payload.activeTreeId || state.sessionTrees[0]?.id || null;
+  if (newTreeId !== state.activeTreeId) {
+    state.evidenceList = [];
+    state.memoryStatus = null;
+  }
+  state.activeTreeId = newTreeId;
   const activeTree = getActiveTree();
   state.activeSessionId = payload.activeSessionId || activeTree?.activeSessionId || activeTree?.rootSessionId || null;
   state.sessionMessages = payload.sessionMessages || {};
@@ -228,6 +253,10 @@ function WorkspaceTabs() {
     tabButton("chat", "Chat"),
     tabButton("tree", "Tree"),
     tabButton("memory", "Memory"),
+    tabButton("evidence", "Evidence"),
+    tabButton("debug", "Debug"),
+    tabButton("trace", "Trace"),
+    tabButton("graph", "Graph"),
     tabButton("files", "Files"),
   ]);
 }
@@ -247,6 +276,12 @@ function tabButton(id, label) {
 function activeWorkspace() {
   if (state.loading) return el("section", { class: "workspace-view empty-view" }, "Loading PrismX workspace...");
   if (state.activeTab === "files") return FilesWorkspace();
+  if (state.activeTab === "graph") {
+    if (!state.graphData && !state.graphLoading) {
+      setTimeout(() => loadGraphData(), 0);
+    }
+    return GraphWorkspace();
+  }
   if (!getActiveTree() || !getActiveSession()) {
     return el("section", { class: "workspace-view empty-view" }, [
       el("h1", {}, "No Session Tree"),
@@ -255,6 +290,24 @@ function activeWorkspace() {
   }
   if (state.activeTab === "tree") return TreeWorkspace();
   if (state.activeTab === "memory") return MemoryWorkspace();
+  if (state.activeTab === "evidence") {
+    if (state.evidenceList.length === 0 && !state.evidenceLoading && !state.memoryStatus) {
+      loadEvidenceList();
+    }
+    return EvidenceWorkspace();
+  }
+  if (state.activeTab === "debug") {
+    if (!state.debugData && !state.debugLoading) {
+      setTimeout(() => loadDebugData(), 0);
+    }
+    return DebugWorkspace();
+  }
+  if (state.activeTab === "trace") {
+    if (!state.traceData && !state.traceLoading) {
+      setTimeout(() => loadTraceData(), 0);
+    }
+    return TraceWorkspace();
+  }
   return ChatWorkspace();
 }
 
@@ -411,14 +464,56 @@ function MemoryWorkspace() {
   const memoryItems = getTreeMemoryForActiveTree();
   const knowledge = getKnowledgeForActiveContext();
   const stats = getWorkingContextStats();
+  const results = state.memorySearchResults !== null ? state.memorySearchResults : memoryItems;
+
   return el("section", { class: "workspace-view memory-workspace" }, [
-    TitleRow("Tree-Guided Memory Layer", "Knowledge Space", []),
+    TitleRow("Tree-Guided Memory Layer", "Knowledge Space", [
+      button("Fold Recent", "primary", () => executeMemoryFold()),
+    ]),
+    el("div", { class: "memory-toolbar" }, [
+      el("div", { class: "memory-search" }, [
+        el("input", {
+          type: "text",
+          class: "memory-search-input",
+          placeholder: "Search tree memory...",
+          value: state.memorySearchQuery,
+          oninput: (event) => {
+            state.memorySearchQuery = event.target.value;
+            if (!state.memorySearchQuery.trim()) {
+              state.memorySearchResults = null;
+              render();
+            }
+          },
+          onkeydown: (event) => {
+            if (event.key === "Enter") executeMemorySearch();
+          },
+        }),
+        button("Search", "secondary", () => executeMemorySearch()),
+        state.memorySearchResults !== null
+          ? button("Clear", "secondary", () => {
+              state.memorySearchQuery = "";
+              state.memorySearchResults = null;
+              render();
+            })
+          : null,
+      ]),
+    ]),
     el("div", { class: "memory-grid" }, [
       ContextCard("Active Path Context", path.map((session, index) =>
         `${index + 1}. ${session.title} / ${getMessagesForSession(session.id).length} messages`
       )),
-      ContextCard("Tree Memory Recall", memoryItems.length ? memoryItems.map(renderMemoryLine) : ["No tree memory items for this tree yet."]),
-      ContextCard("Long-term Knowledge Recall", knowledge.map(renderKnowledgeLine)),
+      el("article", { class: "context-card memory-items-card" }, [
+        el("div", { class: "context-card-head" }, [
+          el("h2", {}, "Tree Memory Recall"),
+          el("span", { class: "context-count" }, String(results.length)),
+        ]),
+        el("div", { class: "context-lines memory-items-list" },
+          results.length
+            ? results.map((item) => MemoryItemCard(item))
+            : [el("p", {}, state.memorySearchResults !== null ? "No matching tree memory items." : "No tree memory items for this tree yet.")]
+        ),
+      ]),
+      ContextCard("Long-term Knowledge Recall", knowledge.length ? knowledge.map(renderKnowledgeLine) : ["No long-term knowledge items yet."]),
       ContextCard("Working Context Preview", [
         `Active Path Sessions: ${stats.activePathSessions}`,
         `Active Path Messages: ${stats.activePathMessages}`,
@@ -427,7 +522,538 @@ function MemoryWorkspace() {
         `Long-term Knowledge Items: ${stats.longTermKnowledgeItems}`,
       ]),
     ]),
+    state.rollbackPlan ? RollbackPlanModal(state.rollbackPlan) : null,
   ]);
+}
+
+function EvidenceWorkspace() {
+  const tree = getActiveTree();
+  const loading = state.evidenceLoading;
+  const items = state.evidenceList;
+  const modal = state.evidenceModal;
+
+  return el("section", { class: "workspace-view evidence-workspace" }, [
+    TitleRow("Evidence Layer", "Execution Evidence", [
+      button("Refresh", "secondary", () => loadEvidenceList()),
+    ]),
+    el("div", { class: "session-context-row" }, [
+      infoPill("Tree", tree?.title || "-"),
+      infoPill("Evidence Items", String(items.length)),
+    ]),
+    loading
+      ? EmptyState("Loading evidence...")
+      : state.evidenceError
+        ? EmptyState(state.evidenceError)
+        : items.length
+          ? el("div", { class: "evidence-list" }, items.map((ev) => EvidenceCard(ev)))
+          : EmptyState("No evidence recorded for this session tree yet. Evidence is created when the agent runs tools or encounters errors."),
+    modal ? EvidenceViewModal(modal) : null,
+  ]);
+}
+
+function EvidenceCard(ev) {
+  return el("div", {
+    class: `evidence-card type-${ev.evidenceType || ev.evidence_type || "note"}`,
+    onclick: () => openEvidenceView(ev),
+    title: "Click to view content",
+  }, [
+    el("span", { class: "evidence-type-badge" }, ev.evidenceType || ev.evidence_type || "note"),
+    el("strong", {}, ev.title || ev.path || ev.id),
+    ev.createdAt ? el("time", {}, formatTime(ev.createdAt)) : null,
+  ]);
+}
+
+function EvidenceViewModal(ev) {
+  return el("div", {
+    class: "modal-backdrop",
+    onclick: (event) => { if (event.target === event.currentTarget) closeEvidenceView(); },
+  }, [
+    el("section", { class: "modal-card evidence-modal", role: "dialog", "aria-modal": "true" }, [
+      el("div", { class: "modal-head" }, [
+        el("div", {}, [
+          el("p", { class: "eyebrow" }, `Evidence / ${ev.evidenceType || ev.evidence_type}`),
+          el("h2", {}, ev.title || ev.path || "Evidence Detail"),
+        ]),
+        iconButton("X", "Close", () => closeEvidenceView()),
+      ]),
+      el("div", { class: "modal-body evidence-body" }, [
+        el("div", { class: "evidence-meta" }, [
+          el("span", {}, `ID: ${ev.id}`),
+          ev.sourceEventId ? el("span", {}, `Source Event: ${ev.sourceEventId}`) : null,
+          ev.createdAt ? el("span", {}, formatTime(ev.createdAt)) : null,
+        ].filter(Boolean)),
+        el("pre", { class: "evidence-content" }, ev._content || "(empty)"),
+      ]),
+      el("div", { class: "modal-actions" }, [
+        button("Close", "secondary", () => closeEvidenceView()),
+      ]),
+    ]),
+  ]);
+}
+
+async function loadEvidenceList() {
+  state.evidenceLoading = true;
+  state.evidenceError = "";
+  render();
+  try {
+    const status = await apiGet("/api/memory/status");
+    state.memoryStatus = status;
+    const tree = getActiveTree();
+    const treeId = status.treeId || status.tree_id || tree?.id || state.activeTreeId;
+    if (!treeId) {
+      state.evidenceList = [];
+      state.evidenceError = "No active session tree";
+    } else {
+      const evidenceData = status.evidence_items || status.evidence;
+      const evidenceList = Array.isArray(evidenceData) ? evidenceData : [];
+      state.evidenceList = evidenceList.map(function(ev) {
+        return typeof ev === "string" ? { id: ev, evidenceType: "note", title: ev } : ev;
+      });
+    }
+  } catch (err) {
+    state.evidenceError = "Failed to load evidence: " + err.message;
+    state.evidenceList = [];
+  } finally {
+    state.evidenceLoading = false;
+    render();
+  }
+}
+
+async function openEvidenceView(ev) {
+  try {
+    const result = await apiGet("/api/memory/evidence/" + encodeURIComponent(ev.id));
+    state.evidenceModal = { ...ev, _content: result.content || "(no content)" };
+  } catch (err) {
+    state.evidenceModal = { ...ev, _content: "(failed to load: " + err.message + ")" };
+  }
+  render();
+}
+
+function closeEvidenceView() {
+  state.evidenceModal = null;
+  render();
+}
+
+async function loadDebugData() {
+  state.debugLoading = true;
+  state.recallLoading = true;
+  render();
+  try {
+    var _a = await Promise.all([
+      apiGet("/api/context/debug"),
+      apiGet("/api/memory/promotion-log").catch(function() { return { entries: [] }; }),
+      apiGet("/api/context/runtime-recall").catch(function() { return { available: false, reason: "API unavailable" }; }),
+    ]);
+    var debugData = _a[0];
+    var promoData = _a[1];
+    var recallData = _a[2];
+    state.debugData = Object.assign({}, debugData, { promotionLog: promoData.entries || [] });
+    state.recallData = recallData;
+  } catch (err) {
+    showToast("Failed to load debug data: " + err.message);
+    state.debugData = { error: err.message };
+    state.recallData = { available: false, reason: err.message };
+  } finally {
+    state.debugLoading = false;
+    state.recallLoading = false;
+    render();
+  }
+}
+
+function DebugWorkspace() {
+  const data = state.debugData;
+  const loading = state.debugLoading;
+  const recall = state.recallData;
+  const recallLoading = state.recallLoading;
+
+  return el("section", { class: "workspace-view debug-workspace" }, [
+    TitleRow("Runtime Recall", "Context Debug", [
+      button("Refresh", "secondary", () => loadDebugData()),
+    ]),
+    // ── Runtime Recall Panel ──
+    recallLoading
+      ? EmptyState("Loading runtime recall data...")
+      : recall && recall.available
+        ? el("div", { class: "recall-panel" }, [
+            RecallCoarseCard(recall),
+            RecallIntentCard(recall),
+            RecallResultsCard(recall),
+            RecallRenderedCard(recall),
+          ])
+        : (recall && !recall.available)
+          ? el("div", { class: "recall-panel recall-unavailable" }, [
+              el("p", { class: "recall-empty-note" }, "Runtime Recall data not yet available. Send a message to trigger the TGM recall pipeline."),
+              recall.reason ? el("p", { class: "recall-empty-reason" }, "Reason: " + recall.reason) : null,
+            ])
+          : null,
+    // ── Context Debug Grid ──
+    loading
+      ? EmptyState("Loading context debug data...")
+      : !data
+        ? EmptyState("Click Refresh to load context debug data.")
+        : data.error
+          ? EmptyState("Error: " + data.error)
+          : el("div", { class: "debug-grid" }, [
+              DebugSummaryCard(data),
+              DebugEntriesCard("Active Path Entries", data.activePathEntryIds || [], data.contextLayers || {}),
+              DebugEntriesCard("Included Entries", data.includedEntryIds || [], data.contextLayers || {}),
+              DebugExcludedCard(data.excludedEntryIds || [], data.excludedReason || {}, data.contextLayers || {}),
+              DebugPromotionCard(data.promotionLog || []),
+              data.siblingBranchEntryIds && data.siblingBranchEntryIds.length > 0
+                ? DebugEntriesCard("Sibling Branch Entries", data.siblingBranchEntryIds, data.contextLayers || {})
+                : null,
+            ].filter(Boolean)),
+  ]);
+}
+
+function DebugSummaryCard(data) {
+  return el("article", { class: "context-card debug-card" }, [
+    el("div", { class: "context-card-head" }, [
+      el("h2", {}, "Context Summary"),
+      el("span", { class: "context-count" }, "4"),
+    ]),
+    el("div", { class: "debug-summary-grid" }, [
+      DebugSummaryRow("Active Leaf ID", data.activeLeafId || "-"),
+      DebugSummaryRow("Estimated Tokens", String(data.estimatedTokens ?? 0)),
+      DebugSummaryRow("Compaction Applied", data.compactionApplied ? "Yes" : "No", data.compactionApplied),
+      DebugSummaryRow("Branch Summary", data.branchSummaryApplied ? "Yes" : "No", data.branchSummaryApplied),
+    ]),
+  ]);
+}
+
+function DebugSummaryRow(label, value, positive) {
+  return el("div", { class: "debug-summary-row" }, [
+    el("span", { class: "debug-summary-label" }, label),
+    el("span", {
+      class: "debug-summary-value" + (positive !== null && positive !== undefined ? (positive ? " status-included" : " status-excluded") : ""),
+    }, value),
+  ]);
+}
+
+function DebugEntriesCard(title, entryIds, contextLayers) {
+  return el("article", { class: "context-card debug-card" }, [
+    el("div", { class: "context-card-head" }, [
+      el("h2", {}, title),
+      el("span", { class: "context-count" }, String(entryIds.length)),
+    ]),
+    el("div", { class: "debug-entries-list" },
+      entryIds.length
+        ? entryIds.map(function(id) { return DebugEntryRow(id, contextLayers[id] || "-"); })
+        : [el("p", { class: "debug-empty-note" }, "No entries.")]
+    ),
+  ]);
+}
+
+function DebugEntryRow(entryId, layer) {
+  return el("div", { class: "debug-entry" }, [
+    el("code", { class: "debug-entry-id" }, entryId),
+    el("span", { class: "layer-badge" }, layer),
+  ]);
+}
+
+function DebugExcludedCard(entryIds, reasons, contextLayers) {
+  return el("article", { class: "context-card debug-card" }, [
+    el("div", { class: "context-card-head" }, [
+      el("h2", {}, "Excluded Entries"),
+      el("span", { class: "context-count context-count-excluded" }, String(entryIds.length)),
+    ]),
+    el("div", { class: "debug-entries-list" },
+      entryIds.length
+        ? entryIds.map(function(id) { return DebugExcludedRow(id, reasons[id] || "unknown", contextLayers[id] || "-"); })
+        : [el("p", { class: "debug-empty-note" }, "No excluded entries.")]
+    ),
+  ]);
+}
+
+function DebugExcludedRow(entryId, reason, layer) {
+  return el("div", { class: "debug-entry excluded" }, [
+    el("code", { class: "debug-entry-id" }, entryId),
+    el("span", { class: "layer-badge" }, layer),
+    el("span", { class: "reason-badge", title: reason }, reason),
+  ]);
+}
+
+function DebugPromotionCard(entries) {
+  return el("article", { class: "context-card debug-card" }, [
+    el("div", { class: "context-card-head" }, [
+      el("h2", {}, "Promotion Log"),
+      el("span", { class: "context-count" }, String(entries.length)),
+    ]),
+    el("div", { class: "debug-entries-list" },
+      entries.length
+        ? entries.map(function(entry) { return DebugPromotionEntry(entry); })
+        : [el("p", { class: "debug-empty-note" }, "No promotions recorded yet.")]
+    ),
+  ]);
+}
+
+function DebugPromotionEntry(entry) {
+  var time = entry.timestamp || entry.created_at || entry.createdAt || "";
+  var foldId = entry.fold_id || entry.foldId || "-";
+  var type = entry.type || entry.memory_type || "unknown";
+  var uri = entry.uri || entry.result_uri || "";
+  var sourceTreeId = entry.tree_id || entry.source_tree_id || entry.sourceTreeId || "-";
+
+  return el("div", { class: "debug-entry" }, [
+    el("time", { class: "debug-entry-time" }, formatTime(time)),
+    el("code", { class: "debug-entry-id" }, foldId),
+    el("span", { class: "memory-type-badge type-" + type }, type),
+    uri ? el("span", { class: "layer-badge", title: uri }, uri.length > 50 ? uri.slice(0, 48) + ".." : uri) : null,
+    el("span", { class: "layer-badge" }, "tree: " + sourceTreeId),
+  ].filter(Boolean));
+}
+
+// ═══════════════════════════════════════════
+// Runtime Recall Debug Cards
+// ═══════════════════════════════════════════
+
+function RecallCoarseCard(recall) {
+  var needsRetrieval = recall.needs_retrieval;
+  var reason = recall.coarse_reasoning || "(no reasoning recorded)";
+  return el("article", { class: "context-card recall-card recall-coarse" }, [
+    el("div", { class: "context-card-head" }, [
+      el("h2", {}, "1. Coarse Reasoning"),
+      el("span", {
+        class: "recall-decision-badge " + (needsRetrieval ? "needs-yes" : "needs-no"),
+      }, needsRetrieval ? "NEEDS RETRIEVAL" : "SKIP RETRIEVAL"),
+    ]),
+    el("div", { class: "recall-reason" }, [
+      el("strong", {}, "Query: "),
+      el("span", {}, recall.query || "-"),
+    ]),
+    el("div", { class: "recall-reason" }, [
+      el("strong", {}, "Decision: "),
+      el("span", {}, reason),
+    ]),
+  ]);
+}
+
+function RecallIntentCard(recall) {
+  var intent = recall.retrieval_intent;
+  if (!intent) {
+    return el("article", { class: "context-card recall-card recall-intent" }, [
+      el("div", { class: "context-card-head" }, [
+        el("h2", {}, "2. Retrieval Intent"),
+        el("span", { class: "context-count" }, "SKIPPED"),
+      ]),
+      el("p", { class: "recall-empty-note" }, "Coarse reasoning determined retrieval was not needed."),
+    ]);
+  }
+  return el("article", { class: "context-card recall-card recall-intent" }, [
+    el("div", { class: "context-card-head" }, [
+      el("h2", {}, "2. Retrieval Intent"),
+      el("span", { class: "context-count" }, "GENERATED"),
+    ]),
+    el("div", { class: "recall-intent-grid" }, [
+      RecallIntentField("Query", intent.query),
+      RecallIntentField("Keywords", (intent.keywords || []).join(", ") || "-"),
+      RecallIntentField("Node Types", (intent.node_types || []).join(", ") || "(all)"),
+      RecallIntentField("Statuses", (intent.statuses || []).join(", ") || "-"),
+      RecallIntentField("Needs Evidence", intent.needs_evidence ? "Yes" : "No"),
+      RecallIntentField("Limit", String(intent.limit || 5)),
+    ]),
+  ]);
+}
+
+function RecallIntentField(label, value) {
+  return el("div", { class: "recall-intent-field" }, [
+    el("span", { class: "recall-intent-label" }, label),
+    el("span", { class: "recall-intent-value" }, value),
+  ]);
+}
+
+function RecallResultsCard(recall) {
+  var treeCount = recall.tree_memory_count || 0;
+  var evidenceCount = recall.evidence_snippets_count || 0;
+  var longCount = recall.long_term_count || 0;
+  var treeItems = recall.tree_memory_items || [];
+  var evidenceItems = recall.evidence_snippets || [];
+  var longItems = recall.long_term_items || [];
+
+  return el("article", { class: "context-card recall-card recall-results" }, [
+    el("div", { class: "context-card-head" }, [
+      el("h2", {}, "3. ContextPacket Overview"),
+      el("span", { class: "context-count" }, (treeCount + evidenceCount + longCount) + " total"),
+    ]),
+    el("div", { class: "recall-results-grid" }, [
+      el("div", { class: "recall-layer" }, [
+        el("span", { class: "recall-layer-head" }, "Tree Memory (" + treeCount + ")"),
+        treeCount
+          ? el("div", { class: "recall-layer-items" }, treeItems.slice(0, 5).map(function(item) {
+              return el("div", { class: "recall-layer-item" }, [
+                el("code", {}, item.uri || "-"),
+                el("span", {}, (item.title || "").slice(0, 80)),
+              ]);
+            }))
+          : el("p", { class: "recall-empty-note" }, "No tree memory items recalled."),
+      ]),
+      el("div", { class: "recall-layer" }, [
+        el("span", { class: "recall-layer-head" }, "Evidence Snippets (" + evidenceCount + ")"),
+        evidenceCount
+          ? el("div", { class: "recall-layer-items" }, evidenceItems.slice(0, 5).map(function(item) {
+              return el("div", { class: "recall-layer-item" }, [
+                el("code", {}, item.uri || "-"),
+                el("span", {}, (item.snippet || item.title || "").slice(0, 120)),
+              ]);
+            }))
+          : el("p", { class: "recall-empty-note" }, "No evidence snippets recalled."),
+      ]),
+      el("div", { class: "recall-layer" }, [
+        el("span", { class: "recall-layer-head" }, "Long-term Knowledge (" + longCount + ")"),
+        longCount
+          ? el("div", { class: "recall-layer-items" }, longItems.slice(0, 5).map(function(item) {
+              return el("div", { class: "recall-layer-item" }, [
+                el("code", {}, item.uri || "-"),
+                el("span", {}, (item.title || "").slice(0, 80)),
+              ]);
+            }))
+          : el("p", { class: "recall-empty-note" }, "No long-term knowledge items recalled."),
+      ]),
+    ]),
+  ]);
+}
+
+function RecallRenderedCard(recall) {
+  var rendered = recall.rendered;
+  if (!rendered) return null;
+  return el("article", { class: "context-card recall-card recall-rendered" }, [
+    el("div", { class: "context-card-head" }, [
+      el("h2", {}, "4. Rendered Context (injected into model)"),
+      el("span", { class: "context-count" }, (rendered.length > 400 ? "truncated" : "full")),
+    ]),
+    el("pre", { class: "recall-rendered-content" }, rendered),
+  ]);
+}
+
+async function loadTraceData() {
+  state.traceLoading = true;
+  render();
+  try {
+    const status = await apiGet("/api/memory/status");
+    state.traceData = status;
+    state.memoryStatus = status;
+  } catch (err) {
+    showToast("Failed to load trace data: " + err.message);
+    state.traceData = { error: err.message };
+  } finally {
+    state.traceLoading = false;
+    render();
+  }
+}
+
+function TraceWorkspace() {
+  const data = state.traceData;
+  const loading = state.traceLoading;
+
+  if (loading) {
+    return el("section", { class: "workspace-view trace-workspace" }, [
+      TitleRow("Execution Trace", "Timeline", [button("Refresh", "secondary", () => loadTraceData())]),
+      EmptyState("Loading trace events..."),
+    ]);
+  }
+  if (!data) {
+    return el("section", { class: "workspace-view trace-workspace" }, [
+      TitleRow("Execution Trace", "Timeline", [button("Refresh", "secondary", () => loadTraceData())]),
+      EmptyState("Click Refresh to load the execution trace timeline."),
+    ]);
+  }
+  if (data.error) {
+    return el("section", { class: "workspace-view trace-workspace" }, [
+      TitleRow("Execution Trace", "Timeline", [button("Refresh", "secondary", () => loadTraceData())]),
+      EmptyState("Error: " + data.error),
+    ]);
+  }
+
+  const items = data.evidence_items || [];
+  const traceEvents = data.traceEvents || items.length;
+  const foldedNodes = data.foldedNodes || 0;
+  const sorted = items.slice().sort(function(a, b) {
+    return (a.createdAt || "").localeCompare(b.createdAt || "");
+  });
+
+  return el("section", { class: "workspace-view trace-workspace" }, [
+    TitleRow("Execution Trace", "Timeline", [button("Refresh", "secondary", () => loadTraceData())]),
+    el("div", { class: "session-context-row" }, [
+      infoPill("Trace Events", String(traceEvents)),
+      infoPill("Folded Nodes", String(foldedNodes)),
+      infoPill("Evidence Items", String(items.length)),
+    ]),
+    sorted.length
+      ? el("div", { class: "trace-timeline" }, sorted.map(function(ev) { return TraceEntry(ev); }))
+      : EmptyState("No trace events recorded yet."),
+  ]);
+}
+
+function traceEventKind(evidenceType) {
+  switch (evidenceType) {
+    case "error_log": return "ERROR";
+    case "command_output": return "TOOL_RESULT";
+    case "code_snippet": return "TOOL_RESULT";
+    default: return "ASSISTANT";
+  }
+}
+
+function traceBadgeStyle(kind) {
+  switch (kind) {
+    case "ERROR": return "background: var(--red);";
+    case "TOOL_RESULT": return "background: var(--prism-cyan);";
+    case "TOOL_CALL": return "background: var(--amber);";
+    case "USER": return "background: var(--prism-indigo);";
+    default: return "background: var(--green);";
+  }
+}
+
+function TraceEntry(ev) {
+  var kind = traceEventKind(ev.evidenceType || ev.evidence_type);
+  var badgeStyle = traceBadgeStyle(kind);
+  var expanded = state.traceExpanded.has(ev.id);
+
+  return el("div", { class: "trace-entry" }, [
+    el("div", { class: "trace-dot", style: badgeStyle }),
+    el("div", { class: "trace-card" }, [
+      el("div", { class: "trace-card-head", onclick: function() { toggleTraceEntry(ev.id); } }, [
+        el("time", { class: "trace-time" }, formatTime(ev.createdAt)),
+        el("span", { class: "trace-type-badge", style: badgeStyle }, kind),
+        el("strong", { class: "trace-title" }, ev.title || ev.path || ev.id),
+        el("span", { class: "trace-expand" }, expanded ? "▲" : "▼"),
+      ]),
+      expanded ? el("div", { class: "trace-card-body" }, [
+        el("div", { class: "evidence-meta" }, [
+          el("span", {}, "ID: " + (ev.id || "-")),
+          ev.sourceEventId ? el("span", { class: "trace-source-link", title: "Click to load source evidence", onclick: function(event) { event.stopPropagation(); openEvidenceView({ id: ev.sourceEventId }); } }, "Source: " + ev.sourceEventId) : null,
+          ev.sourceEventId ? el("span", { class: "trace-fold-badge" }, "FOLDED") : null,
+        ]),
+        ev._content !== undefined
+          ? el("pre", { class: "trace-content" }, ev._content || "(empty)")
+          : el("p", { class: "trace-loading" }, "Loading..."),
+      ]) : null,
+    ]),
+  ]);
+}
+
+async function toggleTraceEntry(evId) {
+  if (state.traceExpanded.has(evId)) {
+    state.traceExpanded.delete(evId);
+    render();
+    return;
+  }
+  state.traceExpanded.add(evId);
+  render();
+  var status = state.traceData;
+  var items = status ? (status.evidence_items || []) : [];
+  var item = null;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].id === evId) { item = items[i]; break; }
+  }
+  if (item && item._content === undefined) {
+    try {
+      var result = await apiGet("/api/memory/evidence/" + encodeURIComponent(evId));
+      item._content = result.content || "(no content)";
+    } catch (err) {
+      item._content = "(failed to load: " + err.message + ")";
+    }
+    render();
+  }
 }
 
 function FilesWorkspace() {
@@ -485,6 +1111,173 @@ function ContextCard(title, lines) {
     el("h2", {}, title),
     el("div", { class: "context-lines" }, (lines.length ? lines : ["-"]).map((line) => el("p", {}, line))),
   ]);
+}
+
+function MemoryItemCard(item) {
+  const itemId = item.foldId || item.id;
+  const expanded = state.expandedItems.has(itemId);
+  const memType = item.type || "finding";
+  const status = item.status || "active";
+  const reuse = item.reuseCount || 0;
+  const confidence = Number(item.confidence || 0).toFixed(2);
+  const heat = Math.min(reuse, 10);
+
+  return el("div", { class: `memory-item ${expanded ? "expanded" : ""}` }, [
+    el("div", { class: "memory-item-row", onclick: () => toggleMemoryItem(itemId) }, [
+      el("span", { class: `memory-type-badge type-${memType}` }, memType),
+      el("span", { class: "memory-item-content" }, item.content || item.title || itemId),
+      el("span", { class: "memory-item-meta" }, [
+        el("span", { class: `memory-status status-${status}` }, status),
+        reuse > 0 ? el("span", {
+          class: "memory-heat",
+          style: `--heat: ${Math.min(heat / 10, 1)}; opacity: ${0.3 + Math.min(heat / 10, 1) * 0.7}`,
+          title: `Reused ${reuse} times`,
+        }, "\u{1F525} " + reuse) : null,
+        el("span", {}, "conf " + confidence),
+        item.promoted ? el("span", { class: "memory-promoted-badge" }, "promoted") : null,
+      ].filter(Boolean)),
+      el("span", { class: "memory-item-expand" }, expanded ? "▲" : "▼"),
+    ]),
+    expanded ? el("div", { class: "memory-item-detail" }, [
+      el("div", { class: "memory-item-detail-meta" }, [
+        el("span", {}, "ID: " + itemId),
+        el("span", {}, "Type: " + memType),
+        el("span", {}, "Status: " + status),
+        el("span", {}, "Confidence: " + confidence),
+        el("span", {}, "Reuse: " + reuse),
+        item.sourceSessionId ? el("span", {}, "Source Session: " + item.sourceSessionId) : null,
+      ].filter(Boolean)),
+      item.evidenceIds && item.evidenceIds.length
+        ? el("div", { class: "memory-item-evidence" }, [
+            el("strong", {}, "Evidence:"),
+            ...item.evidenceIds.map(function(eid) {
+              return el("span", {
+                class: "evidence-link",
+                onclick: function(ev) { ev.stopPropagation(); openEvidenceView({ id: eid }); },
+              }, eid);
+            }),
+          ])
+        : null,
+      el("div", { class: "memory-item-actions" }, [
+        !item.promoted
+          ? button("Promote", "primary", function(ev) { ev.stopPropagation(); executeMemoryPromote(item); })
+          : null,
+        status === "failed" || status === "partial" || memType === "failure" || memType === "partial_fix"
+          ? button("Rollback", "secondary", function(ev) { ev.stopPropagation(); executeMemoryRollback(item); })
+          : null,
+      ]),
+    ]) : null,
+  ]);
+}
+
+function toggleMemoryItem(itemId) {
+  if (state.expandedItems.has(itemId)) {
+    state.expandedItems.delete(itemId);
+  } else {
+    state.expandedItems.add(itemId);
+  }
+  render();
+}
+
+function RollbackPlanModal(plan) {
+  return el("div", {
+    class: "modal-backdrop",
+    onclick: (event) => { if (event.target === event.currentTarget) closeRollbackPlan(); },
+  }, [
+    el("section", { class: "modal-card rollback-modal", role: "dialog", "aria-modal": "true" }, [
+      el("div", { class: "modal-head" }, [
+        el("div", {}, [
+          el("p", { class: "eyebrow" }, "Rollback Plan"),
+          el("h2", {}, plan.itemTitle || plan.foldId || "Rollback"),
+        ]),
+        iconButton("X", "Close", () => closeRollbackPlan()),
+      ]),
+      el("div", { class: "modal-body" }, [
+        plan.risk ? el("div", { class: "rollback-risk" }, [
+          el("strong", {}, "Risk: "),
+          el("span", {}, plan.risk),
+        ]) : null,
+        plan.related_files && plan.related_files.length ? el("div", { class: "rollback-section" }, [
+          el("h3", {}, "Related Files"),
+          el("ul", {}, plan.related_files.map(function(f) { return el("li", {}, f); })),
+        ]) : null,
+        plan.evidence_refs && plan.evidence_refs.length ? el("div", { class: "rollback-section" }, [
+          el("h3", {}, "Evidence References"),
+          el("ul", {}, plan.evidence_refs.map(function(ref) { return el("li", {}, ref); })),
+        ]) : null,
+        plan.suggested_steps && plan.suggested_steps.length ? el("div", { class: "rollback-section" }, [
+          el("h3", {}, "Suggested Steps"),
+          el("ol", {}, plan.suggested_steps.map(function(step) { return el("li", {}, step); })),
+        ]) : null,
+      ]),
+      el("div", { class: "modal-actions" }, [
+        button("Close", "secondary", () => closeRollbackPlan()),
+      ]),
+    ]),
+  ]);
+}
+
+async function executeMemoryFold() {
+  try {
+    const title = "Fold " + new Date().toLocaleTimeString();
+    const result = await apiPost("/api/memory/fold", { title: title });
+    if (result.workspace) applyWorkspace(result.workspace);
+    showToast(result.fold ? "Memory folded: " + (result.fold.title || result.fold.id) : "Fold completed");
+  } catch (err) {
+    showToast("Fold failed: " + err.message);
+  }
+}
+
+async function executeMemorySearch() {
+  const query = state.memorySearchQuery.trim();
+  if (!query) {
+    state.memorySearchResults = null;
+    render();
+    return;
+  }
+  try {
+    const result = await apiPost("/api/memory/retrieve", { query: query, limit: 20 });
+    state.memorySearchResults = result.items || [];
+  } catch (err) {
+    showToast("Search failed: " + err.message);
+    state.memorySearchResults = [];
+  }
+  render();
+}
+
+async function executeMemoryPromote(item) {
+  const foldId = item.foldId || item.id;
+  if (!foldId) {
+    showToast("No fold ID available for promotion");
+    return;
+  }
+  try {
+    const result = await apiPost("/api/memory/promote", { foldId: foldId, type: "pattern" });
+    if (result.workspace) applyWorkspace(result.workspace);
+    showToast(result.uri ? "Promoted: " + result.uri : "Promotion completed");
+  } catch (err) {
+    showToast("Promote failed: " + err.message);
+  }
+}
+
+async function executeMemoryRollback(item) {
+  const foldId = item.foldId || item.id;
+  if (!foldId) {
+    showToast("No fold ID available for rollback");
+    return;
+  }
+  try {
+    const plan = await apiPost("/api/memory/rollback-plan", { foldId: foldId });
+    state.rollbackPlan = { ...plan, foldId: foldId, itemTitle: item.content || item.title || foldId };
+    render();
+  } catch (err) {
+    showToast("Rollback failed: " + err.message);
+  }
+}
+
+function closeRollbackPlan() {
+  state.rollbackPlan = null;
+  render();
 }
 
 function TitleRow(eyebrow, title, actions) {
@@ -1135,6 +1928,10 @@ function movePointer(event) {
     state.treeView.x = state.drag.x + event.clientX - state.drag.startX;
     state.treeView.y = state.drag.y + event.clientY - state.drag.startY;
     render();
+  } else if (state.drag.type === "graph") {
+    state.graphView.x = state.drag.x + event.clientX - state.drag.startX;
+    state.graphView.y = state.drag.y + event.clientY - state.drag.startY;
+    render();
   }
 }
 
@@ -1313,14 +2110,35 @@ function renderMemoryLine(item) {
 }
 
 function renderKnowledgeLine(item) {
-  const meta = [
-    item.type || "knowledge",
-    item.sourceTreeId ? `tree ${item.sourceTreeId}` : "",
-    item.sourceMemoryId ? `memory ${item.sourceMemoryId}` : "",
-    `confidence ${Number(item.confidence || 0).toFixed(2)}`,
-    item.status || "active",
-  ].filter(Boolean).join(" / ");
-  return `${meta} / ${item.content || item.title}`;
+  const segments = [];
+  segments.push(el("span", { class: "knowledge-type-badge" }, item.type || "knowledge"));
+  if (item.sourceTreeId) {
+    segments.push(el("span", {
+      class: "knowledge-link",
+      title: "Click to switch to source tree",
+      onclick: function() {
+        const tree = state.sessionTrees.find(function(t) { return t.id === item.sourceTreeId; });
+        if (tree) {
+          selectSession(tree.activeSessionId || tree.rootSessionId);
+        } else {
+          showToast("Tree not found: " + item.sourceTreeId);
+        }
+      }
+    }, "tree " + item.sourceTreeId));
+  }
+  if (item.sourceMemoryId) {
+    segments.push(el("span", {
+      class: "knowledge-link",
+      title: "Click to copy memory ID",
+      onclick: function() { showToast("Memory fold ID: " + item.sourceMemoryId); }
+    }, "memory " + item.sourceMemoryId));
+  }
+  segments.push(el("span", { class: "knowledge-conf" }, Number(item.confidence || 0).toFixed(2)));
+  if (item.status) {
+    segments.push(el("span", { class: "knowledge-status" }, item.status));
+  }
+  segments.push(el("span", { class: "knowledge-content" }, item.content || item.title));
+  return segments;
 }
 
 function infoPill(label, value) {
@@ -1415,6 +2233,302 @@ async function apiJson(path, method, payload) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `${path} ${response.status}`);
   return data;
+}
+
+function normalizeTool(tool, fallbackId) {
+  return {
+    id: tool.id || tool.toolUseId || `${fallbackId}-${tool.name || "tool"}`,
+    name: tool.name || "tool",
+    status: tool.status || "running",
+    input: tool.input || {},
+    output: tool.output || "",
+  };
+}
+
+function toolKind(tool) {
+  const name = tool.name || "";
+  if (/mcp/.test(name)) return "mcp";
+  if (/memory|remember|context|graph/.test(name)) return "memory";
+  if (/read|search|list/.test(name)) return "search";
+  return "runtime";
+}
+
+function formatTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function parseJson(value) {
+  try {
+    return JSON.parse(value || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function showToast(message) {
+  nodes.toast.textContent = message;
+  nodes.toast.hidden = false;
+  window.clearTimeout(showToast.timer);
+  showToast.timer = window.setTimeout(() => {
+    nodes.toast.hidden = true;
+  }, 2800);
+}
+
+const GRAPH_TYPE_COLORS = {
+  pattern: "#8b5cf6",
+  decision: "#6366f1",
+  constraint: "#ec4899",
+  finding: "#10b981",
+  tool: "#f59e0b",
+  knowledge: "#06b6d4",
+};
+const GRAPH_NODE_RADIUS = 22;
+const GRAPH_CANVAS_WIDTH = 1200;
+const GRAPH_CANVAS_HEIGHT = 800;
+
+function startGraphPan(event) {
+  if (event.target.closest(".graph-node-circle")) return;
+  state.drag = { type: "graph", startX: event.clientX, startY: event.clientY, x: state.graphView.x, y: state.graphView.y };
+  event.currentTarget.setPointerCapture(event.pointerId);
+}
+
+function graphZoomCanvas(event) {
+  event.preventDefault();
+  const next = clamp(state.graphView.scale + (event.deltaY > 0 ? -0.08 : 0.08), 0.2, 2.5);
+  state.graphView.scale = Math.round(next * 100) / 100;
+  render();
+}
+
+async function loadGraphData() {
+  state.graphLoading = true;
+  render();
+  try {
+    const data = await apiGet("/api/knowledge/graph");
+    if (data.nodes && data.nodes.length) {
+      const positions = computeGraphLayout(data.nodes, data.edges || [], GRAPH_CANVAS_WIDTH, GRAPH_CANVAS_HEIGHT);
+      data.nodes.forEach((node) => {
+        const pos = positions.get(node.id);
+        node._x = pos.x;
+        node._y = pos.y;
+      });
+    }
+    state.graphData = data;
+  } catch (err) {
+    showToast("Failed to load knowledge graph: " + err.message);
+    state.graphData = { nodes: [], edges: [] };
+  } finally {
+    state.graphLoading = false;
+    render();
+  }
+}
+
+function computeGraphLayout(nodes, edges, width, height) {
+  const positions = new Map();
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const initRadius = Math.min(width, height) * 0.28;
+
+  nodes.forEach((node, i) => {
+    const angle = (i / Math.max(nodes.length, 1)) * 2 * Math.PI + Math.random() * 0.4;
+    positions.set(node.id, {
+      x: centerX + Math.cos(angle) * initRadius + (Math.random() - 0.5) * 100,
+      y: centerY + Math.sin(angle) * initRadius + (Math.random() - 0.5) * 100,
+    });
+  });
+
+  const edgeMap = new Map();
+  edges.forEach((edge) => {
+    const key = [edge.source, edge.target].sort().join("||");
+    if (!edgeMap.has(key)) {
+      edgeMap.set(key, { source: edge.source, target: edge.target });
+    }
+  });
+  const uniqueEdges = [...edgeMap.values()];
+
+  const ITERATIONS = 60;
+  const REPULSION = 8000;
+  const ATTRACTION = 0.002;
+  let damping = 0.88;
+
+  for (let iter = 0; iter < ITERATIONS; iter++) {
+    const forces = new Map();
+    nodes.forEach((n) => forces.set(n.id, { fx: 0, fy: 0 }));
+
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const pa = positions.get(a.id), pb = positions.get(b.id);
+        let dx = pa.x - pb.x;
+        let dy = pa.y - pb.y;
+        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (dist < 15) dist = 15;
+        const force = REPULSION / (dist * dist);
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        forces.get(a.id).fx += fx;
+        forces.get(a.id).fy += fy;
+        forces.get(b.id).fx -= fx;
+        forces.get(b.id).fy -= fy;
+      }
+    }
+
+    uniqueEdges.forEach((edge) => {
+      const src = positions.get(edge.source);
+      const tgt = positions.get(edge.target);
+      if (!src || !tgt) return;
+      let dx = tgt.x - src.x;
+      let dy = tgt.y - src.y;
+      let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const force = dist * ATTRACTION;
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      forces.get(edge.source).fx += fx;
+      forces.get(edge.source).fy += fy;
+      forces.get(edge.target).fx -= fx;
+      forces.get(edge.target).fy -= fy;
+    });
+
+    nodes.forEach((node) => {
+      const f = forces.get(node.id);
+      const pos = positions.get(node.id);
+      pos.x += f.fx * damping;
+      pos.y += f.fy * damping;
+      pos.x = clamp(pos.x, -200, width + 200);
+      pos.y = clamp(pos.y, -200, height + 200);
+    });
+
+    damping *= 0.96;
+  }
+
+  return positions;
+}
+
+function GraphWorkspace() {
+  const data = state.graphData;
+  const loading = state.graphLoading;
+  const typeColors = GRAPH_TYPE_COLORS;
+
+  if (loading) {
+    return el("section", { class: "workspace-view graph-workspace" }, [
+      TitleRow("Knowledge Layer", "Knowledge Graph", [
+        button("Refresh", "secondary", () => loadGraphData()),
+      ]),
+      EmptyState("Loading knowledge graph..."),
+    ]);
+  }
+
+  if (!data || !data.nodes || !data.nodes.length) {
+    return el("section", { class: "workspace-view graph-workspace" }, [
+      TitleRow("Knowledge Layer", "Knowledge Graph", [
+        button("Refresh", "secondary", () => loadGraphData()),
+      ]),
+      EmptyState("No knowledge graph data available yet. Promote tree memory items to build the graph."),
+    ]);
+  }
+
+  const edgeLines = (data.edges || []).map((edge) => {
+    const srcNode = data.nodes.find((n) => n.id === edge.source);
+    const tgtNode = data.nodes.find((n) => n.id === edge.target);
+    if (!srcNode || !tgtNode) return null;
+    return { ...edge, x1: srcNode._x, y1: srcNode._y, x2: tgtNode._x, y2: tgtNode._y };
+  }).filter(Boolean);
+
+  const usedTypes = [...new Set(data.nodes.map((n) => n.type || "knowledge"))];
+  const nodeCount = data.nodes.length;
+  const edgeCount = (data.edges || []).length;
+  const showLabels = nodeCount <= 40;
+
+  return el("section", { class: "workspace-view graph-workspace" }, [
+    TitleRow("Knowledge Layer", "Knowledge Graph", [
+      el("span", { class: "graph-count-badge" }, `${nodeCount} nodes, ${edgeCount} edges`),
+      button("Refresh", "secondary", () => loadGraphData()),
+    ]),
+    el("div", { class: "graph-legend" }, usedTypes.map((type) =>
+      el("span", { class: "graph-legend-item" }, [
+        el("span", { class: "graph-legend-dot", style: `background: ${typeColors[type] || typeColors.knowledge}` }),
+        type,
+      ])
+    )),
+    el("div", {
+      class: "graph-canvas",
+      onpointerdown: startGraphPan,
+      onpointermove: movePointer,
+      onpointerup: endPointer,
+      onpointerleave: endPointer,
+      onwheel: graphZoomCanvas,
+    }, [
+      el("div", {
+        class: "graph-plane",
+        style: [
+          `width: ${GRAPH_CANVAS_WIDTH}px`,
+          `height: ${GRAPH_CANVAS_HEIGHT}px`,
+          `transform: translate(${state.graphView.x}px, ${state.graphView.y}px) scale(${state.graphView.scale})`,
+        ].join("; "),
+      }, [
+        el("svg", {
+          class: "graph-edges",
+          width: String(GRAPH_CANVAS_WIDTH),
+          height: String(GRAPH_CANVAS_HEIGHT),
+        }, edgeLines.map((edge) => GraphEdge(edge))),
+        ...data.nodes.map((node) => GraphNode(node, typeColors, showLabels)),
+      ]),
+    ]),
+  ]);
+}
+
+function GraphEdge(edge) {
+  const promoted = edge.relation === "promoted_to";
+  return el("line", {
+    x1: String(edge.x1),
+    y1: String(edge.y1),
+    x2: String(edge.x2),
+    y2: String(edge.y2),
+    class: `graph-edge ${promoted ? "edge-promoted" : "edge-derived"}`,
+    stroke: promoted ? "#8b5cf6" : "#94a3b8",
+    "stroke-width": promoted ? "2" : "1.5",
+    "stroke-dasharray": promoted ? "none" : "5,3",
+    opacity: "0.6",
+  });
+}
+
+function GraphNode(node, typeColors, showLabel) {
+  const color = typeColors[node.type] || typeColors.knowledge;
+  const label = node.title || node.id || "Unknown";
+  const displayLabel = label.length > 28 ? label.slice(0, 26) + "..." : label;
+
+  return el("g", { class: "graph-node" }, [
+    el("circle", {
+      cx: String(node._x),
+      cy: String(node._y),
+      r: String(GRAPH_NODE_RADIUS),
+      fill: color,
+      stroke: "#fff",
+      "stroke-width": "2.5",
+      class: "graph-node-circle",
+      style: "filter: drop-shadow(0 2px 6px rgba(0,0,0,0.15)); cursor: pointer;",
+    }),
+    el("title", {}, `${label}\nType: ${node.type || "knowledge"}\nConfidence: ${Number(node.confidence || 0).toFixed(2)}\nStatus: ${node.status || "active"}`),
+    showLabel ? el("text", {
+      x: String(node._x),
+      y: String(node._y + GRAPH_NODE_RADIUS + 14),
+      "text-anchor": "middle",
+      class: "graph-node-label",
+    }, displayLabel) : null,
+    el("text", {
+      x: String(node._x),
+      y: String(node._y + 5),
+      "text-anchor": "middle",
+      class: "graph-node-type-label",
+      style: "fill: #fff; font-size: 8px; font-weight: 700; pointer-events: none;",
+    }, (node.type || "K").charAt(0).toUpperCase()),
+  ]);
 }
 
 function normalizeTool(tool, fallbackId) {

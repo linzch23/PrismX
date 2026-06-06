@@ -507,24 +507,28 @@ class TreeMemoryStore:
 
     def items(self, tree_id: str) -> list[FoldedNode]:
         state: dict[str, FoldedNode] = {}
-        path = self._folds_path(tree_id)
-        if not path.exists():
-            return []
-        for row in _read_jsonl(path):
-            fold_data = row.get("fold") or row
-            fold_id = fold_data.get("id")
-            if not fold_id:
+        paths = [self._folds_path(tree_id)]
+        legacy_path = self.root / (tree_id + ".jsonl")
+        if legacy_path.exists():
+            paths.append(legacy_path)
+        for path in paths:
+            if not path.exists():
                 continue
-            if row.get("op") == "delete":
-                state.pop(fold_id, None)
-                continue
-            fold_data.setdefault("node_type", fold_data.get("memory_type", "finding"))
-            fold_data.setdefault("summary", fold_data.get("content", ""))
-            fold_data.setdefault("promoted", fold_data.get("status") == "promoted")
-            fold_data.setdefault("source_event_ids", [])
-            fold_data.setdefault("evidence_ids", [])
-            fold_data.setdefault("metadata", {})
-            state[fold_id] = FoldedNode(**{key: value for key, value in fold_data.items() if key in FoldedNode.__dataclass_fields__})
+            for row in _read_jsonl(path):
+                fold_data = row.get("fold") or row.get("item") or row
+                fold_id = fold_data.get("id")
+                if not fold_id:
+                    continue
+                if row.get("op") == "delete":
+                    state.pop(fold_id, None)
+                    continue
+                fold_data.setdefault("node_type", fold_data.get("memory_type", "finding"))
+                fold_data.setdefault("summary", fold_data.get("content", ""))
+                fold_data.setdefault("promoted", fold_data.get("status") == "promoted")
+                fold_data.setdefault("source_event_ids", [])
+                fold_data.setdefault("evidence_ids", [])
+                fold_data.setdefault("metadata", {})
+                state[fold_id] = FoldedNode(**{key: value for key, value in fold_data.items() if key in FoldedNode.__dataclass_fields__})
         return sorted(state.values(), key=lambda item: item.updated_at, reverse=True)
 
     def trace_events(self, tree_id: str, *, limit: int | None = None) -> list[TraceEvent]:
@@ -579,12 +583,14 @@ class TreeMemoryStore:
     def status(self, tree_id: str) -> dict[str, Any]:
         tree_dir = self._tree_dir(tree_id)
         folds = self.items(tree_id)
+        evidence_items = list(_read_jsonl(self._evidence_index_path(tree_id)))
         return {
             "treeId": tree_id,
             "path": str(tree_dir),
             "traceEvents": len(self.trace_events(tree_id)),
             "foldedNodes": len(folds),
-            "evidence": len(list(_read_jsonl(self._evidence_index_path(tree_id)))),
+            "evidence": len(evidence_items),
+            "evidence_items": [{"id": ev.get("id", ""), "evidenceType": ev.get("evidence_type", "note"), "title": ev.get("title", ev.get("id", "")), "sourceEventId": ev.get("source_event_id", ""), "createdAt": ev.get("created_at", "")} for ev in evidence_items],
             "active": sum(1 for fold in folds if fold.status == "active"),
             "promoted": sum(1 for fold in folds if fold.promoted or fold.status == "promoted"),
         }

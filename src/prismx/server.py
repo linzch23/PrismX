@@ -82,9 +82,13 @@ def _handler_factory(state: WebState):
             parsed = urlparse(self.path)
             path = parsed.path
             query = parse_qs(parsed.query)
+            print(f"DEBUG do_GET: path={repr(path)}")  # TEMP DEBUG
             try:
                 if path == "/api/health":
                     self._send_json({"ok": True})
+                    return
+                if path == "/api/ping":
+                    self._send_json({"pong": True, "path": path})
                     return
                 if path == "/api/state":
                     filter_mode = query.get("filter", ["default"])[0]
@@ -114,6 +118,10 @@ def _handler_factory(state: WebState):
                     with state.lock:
                         self._send_json(state.app.tree.debugBuildModelContext(state.app.session_id))
                     return
+                if path == "/api/context/runtime-recall":
+                    with state.lock:
+                        self._send_json(_runtime_recall_payload(state.app))
+                    return
                 if path == "/api/context":
                     prefix = query.get("prefix", [""])[0]
                     limit = int(query.get("limit", ["200"])[0])
@@ -141,6 +149,19 @@ def _handler_factory(state: WebState):
                     with state.lock:
                         tree_id = str(_workspace_payload(state).get("activeTreeId") or state.app.active_tree_id)
                         self._send_json(state.app.tree_memory.status(tree_id))
+                    return
+                if path == "/api/memory/promotion-log":
+                    with state.lock:
+                        log_path = state.app.memory.memory_dir / "promotion_log.jsonl"
+                        entries = []
+                        if log_path.exists():
+                            for line in _read_jsonl_simple(log_path):
+                                entries.append(line)
+                        self._send_json({"entries": entries})
+                    return
+                if path == "/api/knowledge/graph":
+                    with state.lock:
+                        self._send_json(_knowledge_graph_payload(state))
                     return
                 if path == "/api/mcp":
                     with state.lock:
@@ -774,6 +795,129 @@ def _knowledge_items(objects: list[Any]) -> list[dict[str, Any]]:
                 }
             )
     return items
+
+
+def _knowledge_graph_payload(state):
+    nodes = []
+    edges = []
+    seen_nodes = set()
+
+    objects = state.app.memory.list_context(prefix="", limit=500)
+    for obj in objects:
+        if not isinstance(obj, dict):
+            continue
+        uri = str(obj.get("uri") or "")
+        node_id = uri or obj.get("id", str(hash(str(obj))))
+        if node_id in seen_nodes:
+            continue
+        seen_nodes.add(node_id)
+
+        metadata = obj.get("metadata", {}) if isinstance(obj, dict) else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        node_type = str(metadata.get("type") or metadata.get("memory_type") or obj.get("type", "knowledge"))
+        source_tree = str(metadata.get("tree_id") or obj.get("sourceTreeId") or "")
+        source_memory = str(metadata.get("fold_id") or metadata.get("memory_id") or obj.get("sourceMemoryId") or "")
+
+        nodes.append({
+            "id": node_id,
+            "title": str(obj.get("title") or uri or "Knowledge"),
+            "type": node_type,
+            "uri": uri,
+            "sourceTreeId": source_tree,
+            "confidence": float(metadata.get("confidence") or obj.get("confidence") or 0),
+            "status": str(metadata.get("status") or obj.get("status") or "active"),
+        })
+
+        if source_tree:
+            edges.append({
+                "source": source_tree,
+                "target": node_id,
+                "relation": "promoted_to",
+                "label": "promoted",
+            })
+        if source_memory:
+            edges.append({
+                "source": source_memory,
+                "target": node_id,
+                "relation": "derived_from",
+                "label": "derived",
+            })
+
+    graph_dir = state.app.memory.memory_dir / "graph"
+    nodes_path = graph_dir / "nodes.jsonl"
+    edges_path = graph_dir / "edges.jsonl"
+
+    if nodes_path.exists():
+        for line in _read_jsonl_simple(nodes_path):
+            nid = line.get("id", "")
+            if nid and nid not in seen_nodes:
+                seen_nodes.add(nid)
+                nodes.append(line)
+
+    if edges_path.exists():
+        for line in _read_jsonl_simple(edges_path):
+            edges.append(line)
+
+    return {"nodes": nodes, "edges": edges}
+
+
+def _runtime_recall_payload(app: AgentApp) -> dict[str, Any]:
+    builder = getattr(app, "runtime_context_builder", None)
+    if builder is None:
+        return {"available": False, "reason": "Runtime recall builder not initialized"}
+    packet = getattr(builder, "last_packet", None)
+    if packet is None:
+        return {"available": False, "reason": "No runtime recall has been executed yet"}
+    intent = None
+    if packet.retrieval_intent is not None:
+        ri = packet.retrieval_intent
+        intent = {
+            "query": ri.query,
+            "keywords": ri.keywords,
+            "node_types": ri.node_types,
+            "statuses": ri.statuses,
+            "needs_evidence": ri.needs_evidence,
+            "limit": ri.limit,
+        }
+    return {
+        "available": True,
+        "query": packet.query,
+        "active_path_summary": packet.active_path_summary,
+        "coarse_reasoning": packet.coarse_reasoning,
+        "needs_retrieval": packet.retrieval_intent is not None,
+        "retrieval_intent": intent,
+        "tree_memory_count": len(packet.tree_memory),
+        "tree_memory_items": [
+            {"uri": item.get("uri", ""), "title": item.get("title", ""), "trust_score": item.get("trust_score", 0)}
+            for item in packet.tree_memory
+        ],
+        "evidence_snippets_count": len(packet.evidence_snippets),
+        "evidence_snippets": [
+            {"uri": s.get("uri", ""), "title": s.get("title", ""), "snippet": (s.get("snippet") or "")[:200]}
+            for s in packet.evidence_snippets
+        ],
+        "long_term_count": len(packet.long_term),
+        "long_term_items": [
+            {"uri": item.get("uri", ""), "title": item.get("title", ""), "trust_score": item.get("trust_score", 0)}
+            for item in packet.long_term
+        ],
+        "rendered": packet.render(max_chars=8000),
+    }
+
+
+def _read_jsonl_simple(path):
+    import json as _json_mod
+    if not path.exists():
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    yield _json_mod.loads(line)
+                except Exception:
+                    pass
 
 
 if __name__ == "__main__":
