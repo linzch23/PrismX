@@ -1,133 +1,276 @@
-# prismx
+# PrismX
 
-`prismx` 是一个本地运行的通用型 Python Agent，面向命令行工作流、工具调用、
-会话树管理、上下文压缩和多 Agent 协作场景。
+English | [中文](README.zh-CN.md)
 
-## 上下文与记忆架构
+PrismX is a local Python Agent workbench for long-running, multi-branch tasks.
+It combines an Agent runtime, MCP-based environment access, and a Tree-Guided
+Memory system so the Agent can manage history as a tree instead of one long
+linear chat.
 
-prismx 采用多层上下文与记忆系统：
+The Python package and CLI command are lowercase `prismx`.
 
-- **TreeSession（树形会话）** — 追加式 JSONL 会话树，支持分支、跳转、分叉和克隆。原始会话数据的唯一事实来源。
-- **ContextFS（上下文文件系统）** — 持久化上下文/记忆对象存储，分为 L0（摘要）、L1（概览）和 L2（完整正文）三层。对象以 URI 寻址。
-- **MemoryGraph（记忆图谱）** — ContextFS URI 之间的轻量级链接索引（支持、矛盾、更新、相关、派生自）。
-- **RuntimeContextBuilder（运行时上下文构建器）** — 每轮调用前搜索 ContextFS 并将相关记忆注入模型上下文。
-- **SessionMemoryCommitter（会话记忆提交器）** — 连接树压缩与长期记忆的桥梁，由 `/compact` 触发。
+## What PrismX Solves
 
-### 环境变量
+Most Agent products work well for short conversations, but long tasks quickly
+run into three problems:
 
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `MY_AGENT_RUNTIME_CONTEXT_LIMIT` | `6` | 运行时上下文搜索返回条数上限 |
-| `MY_AGENT_RUNTIME_CONTEXT_MAX_CHARS` | `12000` | 运行时上下文输出字符预算 |
-| `MY_AGENT_CONTEXT_BACKEND` | `local` | 上下文后端选择（MVP 仅 `local`） |
-| `MY_AGENT_AUTO_LINK_FANOUT` | `5` | 自动链接候选记忆数 |
-| `MY_AGENT_AUTO_LINK_MIN_CONFIDENCE` | `0.3` | 自动链接最低置信度 |
+- Linear history becomes noisy, because every trial, detour, and failed attempt
+  competes for the same context window.
+- Branches are isolated, so useful experience discovered in one branch is hard
+  to reuse in sibling branches.
+- Long-term memory is easy to pollute if every remembered note is treated as
+  globally reusable knowledge.
 
-### 上下文工具
+PrismX is designed for tasks like:
 
-| 工具 | 说明 |
-|---|---|
-| `search_context` | 按关键词搜索结构化记忆（覆盖 L0/L1/L2） |
-| `read_context` | 按 URI 读取上下文对象 |
-| `list_context` | 列出指定 URI 前缀下的对象 |
-| `show_context_links` | 查看记忆图谱链接关系 |
-| `remember` | 将持久化笔记写入长期记忆（已升级） |
+- learning trees, such as moving from a `Prim` algorithm branch to a sibling
+  `Kruskal` branch while reusing the shared minimum-spanning-tree conclusion;
+- coding repair sessions, where a user says "continue fixing one more issue"
+  and the Agent needs to recover the failed branch, evidence, test output, and
+  relevant long-term patterns;
+- project research, where local session context, tree-level findings, and
+  cross-project knowledge need different lifetimes.
 
-它目前支持：
+## Architecture
 
-- DeepSeek、Anthropic、OpenAI-compatible 三类模型接口
-- 命令行对话中的流式输出
-- stdio 和 Streamable HTTP 两类 MCP 工具接入
-- 工作区文件工具：`read_file`、`write_file`、`edit_file`、`glob`、`grep`
-- shell 命令执行和网页抓取
-- 持久化会话日志、轻量长期记忆和用户偏好
-- 基于会话树的上下文压缩，压缩入口为明确命令 `/compact`
-- `update_todos` 任务规划工具
-- `skills/{name}/SKILL.md` 技能加载
-- 用于调研、分析、编码、审查的一次性子代理
-- 带命名队友和 inbox 的持久多 Agent 协作
-- 只读工具和独立子代理调用的并行执行
+PrismX has three major layers:
 
-## 快速开始
+- **Agent Runtime Layer**: Agent loop, slash commands, tool calling, subagents,
+  and persistent agent team state.
+- **Environment Interaction Layer**: local file/shell tools and external MCP
+  servers.
+- **Tree-Guided Memory Layer**: TreeSession, Tree Memory, Long-term Knowledge,
+  and Runtime Recall.
 
-### 1. 安装依赖并配置环境变量
+## TGM 3.0: Tree-Guided Memory
+
+TGM 3.0 keeps three memory layers with clear responsibilities:
+
+- **Active Path Context**: vertical inheritance from the root SessionNode to the
+  active SessionNode. It gives the active session its parent goals and decisions
+  without injecting unrelated sibling conversations.
+- **Tree Memory**: tree-local execution memory. It stores reusable experience
+  inside the current Session Tree as `TraceEvent`, `Evidence`, `FoldedNode`, and
+  `MemoryIndexItem`.
+- **Long-term Knowledge**: cross-tree and cross-project knowledge. It must be
+  traceable back to Tree Memory through `source_tree_id`, `source_fold_id`, and
+  `source_evidence_ids`.
+
+Runtime Recall is not a blind "load all memory" step. Before the model answers,
+PrismX builds a `ContextPacket` through:
+
+```text
+current request
+-> coarse reasoning
+-> retrieval intent
+-> Tree Memory recall
+-> Evidence snippets
+-> Long-term Knowledge recall
+-> ContextPacket
+```
+
+This means `FoldedNode` gives the Agent a compact navigation layer, while
+`Evidence` keeps the original material available for verification.
+
+## Runtime Data Layout
+
+New runtime data is written under `data/`:
+
+```text
+data/
+  workspace.json
+  sessions/
+    {tree_id}/
+      tree.json
+      sessions/
+        {session_id}.jsonl
+  tree_memory/
+    {tree_id}/
+      trace_events.jsonl
+      folded_nodes.jsonl
+      memory_index.jsonl
+      tree_state.json
+      evidence/
+  knowledge/
+    MEMORY.md
+    memories/
+      user/
+      feedback/
+      project/
+      reference/
+      pattern/
+    graph/
+      nodes.jsonl
+      edges.jsonl
+    promotion_log.jsonl
+```
+
+Deprecated `memory/` and `sessiontrees/` directories may still appear as
+compatibility fallbacks for older local data, but they are not the main TGM 3.0
+write path.
+
+## Quick Start
+
+Install dependencies and create an environment file:
 
 ```bash
 uv sync
 cp .env.example .env
 ```
 
-然后编辑 `.env`，至少填写 `DEEPSEEK_API_KEY`。
-
-默认 `.env` 配置使用 DeepSeek：
+Edit `.env` and configure at least one model provider. A typical DeepSeek setup:
 
 ```bash
 MY_AGENT_PROVIDER=deepseek
 MY_AGENT_MODEL=deepseek-chat
+DEEPSEEK_API_KEY=your_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 MY_AGENT_MAX_CONTEXT_TOKENS=64000
-MY_AGENT_COMPACT_THRESHOLD=0.7
-MY_AGENT_COMPACT_KEEP_MESSAGES=8
 ```
 
-### 2. 选择启动方式
-
-推荐优先使用 `uv` 命令启动。
-
-启动命令行 Agent：
+Start the CLI:
 
 ```bash
 uv run prismx
 ```
 
-启动本地 Web 工作台：
+Start the local Web workbench:
 
 ```bash
 uv run prismx-web
 ```
 
-Web 工作台默认监听：
+The Web workbench listens on:
 
 ```text
 http://127.0.0.1:8765
 ```
 
-如果 `uv run prismx-web` 没有识别到入口命令，可以改用模块方式启动。
+If the console script is unavailable, start the server module directly.
 
-macOS / Linux：
+macOS / Linux:
 
 ```bash
 PYTHONPATH=src uv run python -m prismx.server
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m prismx.server
 ```
 
-仓库也提供了两个等价的脚本入口，适合希望固定项目根目录和解释器路径时使用：
+The repository also provides helper scripts:
 
 ```bash
 ./run.sh
 ./run_web.sh
 ```
 
-其中：
+## Web Workbench
 
-- `./run.sh` 启动命令行 Agent。
-- `./run_web.sh` 启动本地 Web 工作台。
-- 脚本会自动定位项目根目录、设置 `PYTHONPATH`，并使用 `.venv/bin/python` 启动程序。
+The Web workbench exposes the current PrismX workspace through four main tabs:
 
-Web 工作台复用同一个 `AgentApp` 应用层，通过 HTTP/SSE 暴露聊天流、会话树、active branch、
-context debug、工具、MCP 和 team 状态。会话仍然持久化在 `sessiontrees/*.jsonl`，JSONL 仍是事实来源。
+- **Chat**: talk to the active Session. Messages are stored in that Session,
+  not as tree nodes.
+- **Tree**: view and manage the Session Tree. Each node is a real backend
+  SessionNode.
+- **Memory**: inspect Active Path Context, Tree Memory, Evidence-backed folds,
+  Long-term Knowledge, and Runtime Recall state.
+- **Files**: read the selected browser workspace folder when the File System
+  Access API is available.
 
-## MCP 工具
+Project workspace folders are browser handles. PrismX runtime data still lives
+under `data/`; a selected user workspace folder is not used as PrismX's internal
+storage directory.
 
-`prismx` 可以连接外部 MCP server，并把远端工具暴露给 Agent 使用。配置文件位于项目根目录的
-`mcp_servers.json`。
+## CLI Commands
 
-示例：
+Run `/help` in the CLI to print the current command list.
+
+Basics:
+
+```text
+/help
+/exit
+```
+
+Agent Runtime:
+
+```text
+/agent
+/run
+/team
+/tools
+/mcp
+```
+
+TreeSession:
+
+```text
+/tree
+/tree list
+/tree new NAME
+/tree rename ID NAME
+/tree delete ID
+
+/session
+/session new NAME
+/session rename ID NAME
+/session delete ID
+
+/switch ID
+```
+
+TGM Memory:
+
+```text
+/path
+/memory
+/memory add TYPE CONTENT
+/memory delete ID
+/memory fold
+/memory retrieve QUERY
+/memory promote FOLD_ID --type pattern
+/memory evidence EVIDENCE_ID
+/memory rollback FOLD_ID
+/memory status
+
+/recall
+/working-context
+/knowledge
+```
+
+Debug:
+
+```text
+/state
+/debug
+```
+
+## Memory Tools
+
+The `remember` tool writes new reusable information into Tree Memory by default.
+Tree Memory can then be folded into a `FoldedNode`, retrieved inside the current
+Session Tree, and promoted to Long-term Knowledge when it becomes stable or is
+explicitly promoted.
+
+Long-term Knowledge is not created as an untraceable free-form note. New
+long-term entries must point back to their Tree Memory source:
+
+```text
+source_tree_id
+source_fold_id
+source_evidence_ids
+```
+
+This keeps global knowledge useful without losing provenance.
+
+## MCP Tools
+
+PrismX can connect to external MCP servers through `mcp_servers.json`.
+
+Example:
 
 ```json
 {
@@ -151,67 +294,61 @@ context debug、工具、MCP 和 team 状态。会话仍然持久化在 `session
 }
 ```
 
-如果配置里提供了 `command` 或 `url`，`transport` 可以省略。MCP 工具会注册为
-`mcp_{server}_{tool}` 形式，非法字符会被替换成 `_`。当前 MCP 集成只暴露工具，
-还没有映射 MCP resources 和 prompts。
+If a server config provides `command` or `url`, `transport` can usually be
+inferred. MCP tools are registered as `mcp_{server}_{tool}` with unsupported
+characters replaced by `_`.
 
-## 命令行指令
-
-在 CLI 里可以使用这些命令：
-
-- `/help`：查看命令帮助
-- `/tools`：列出已注册工具
-- `/todos`：查看当前任务列表
-- `/memory`：查看长期记忆
-- `/mcp`：查看 MCP server 状态和发现的 MCP 工具
-- `/compact`：明确触发当前会话分支的上下文压缩
-- `/team`：查看持久队友状态
-- `/inbox`：读取并清空 lead inbox
-- `/tree [--filter default|no-tools|user-only|labeled-only|all]`：查看 JSONL 会话树
-- `/jump ID`：把 active leaf 移到某个历史节点
-- `/fork ID`：从某个历史节点分叉，下一条输入会创建兄弟分支
-- `/clone`：把当前 active branch 克隆成新 session 并切换过去
-- `/label ID LABEL`：给会话树节点打标签
-- `/exit`：退出
-
-## 会话树与上下文压缩
-
-会话持久化在 `sessiontrees/` 下的 append-only JSONL 文件里。JSONL 文件是事实来源；
-程序启动时会通过重放文件重建内存索引。
-
-`/compact` 会在当前 active branch 上追加一个 `compaction` 条目：
-
-- 旧上下文被压成结构化 checkpoint summary
-- 最近上下文保留原文
-- 原始历史不会被删除
-- 后续模型上下文会自动使用“压缩摘要 + 最近消息”
-
-压缩是命令式触发，不会被普通自然语言对话误触发。
-
-## 项目结构
+## Project Structure
 
 ```text
 src/prismx/
-  cli.py              CLI 入口
-  server.py           本地 Web/API 入口
-  loop.py             应用装配
-  runner.py           模型与工具调用循环
-  compactor.py        旧版线性历史压缩
-  tree_session.py     会话树、分支、标签和结构化压缩
-  team.py             持久队友管理和 inbox 消息总线
-  memory.py           日志、长期记忆和 token 记录
-  skills.py           技能加载器
-  context.py          system prompt 构造器
-  tools/              内置工具实现
-  subagents/          通用子代理注册表
-templates/
-  system.md           主 Agent 提示词
-  subagents/*.md      子代理角色提示词
-skills/
-  summarize/SKILL.md  示例技能
+  cli.py                  CLI entrypoint and slash commands
+  server.py               local Web/API server
+  loop.py                 AgentApp assembly and Agent loop integration
+  runner.py               model and tool-calling loop
+  workspace.py            project, SessionTree, and SessionNode metadata
+  tree_session.py         session JSONL persistence and session history
+  tree_memory.py          TGM 3.0 TraceEvent, Evidence, FoldedNode, retrieval
+  runtime_recall.py       Active Path + Tree Memory + Long-term recall builder
+  memory.py               traceable Long-term Knowledge store
+  working_set.py          working context assembly
+  team.py                 persistent teammate state
+  skills.py               skill loader
+  tools/                  built-in tool implementations
+  subagents/              subagent registry
+
+frontend/
+  index.html
+  app.js
+  styles.css
+
+docs/
+  TGM3.0.md
+  TGM_FRONTEND_TEST_PLAN.md
 ```
 
-## 说明
+## Tests
 
-默认情况下，文件工具只允许访问配置的工作区。相对路径会从 `MY_AGENT_WORKSPACE` 或当前目录解析。
+Run the Python test suite:
 
+```bash
+uv run python -m unittest discover tests
+```
+
+For frontend syntax checks:
+
+```bash
+node --check frontend/app.js
+```
+
+## Further Reading
+
+- `docs/TGM3.0.md`: current Tree-Guided Memory design and implementation notes.
+- `docs/TGM_FRONTEND_TEST_PLAN.md`: frontend and memory-system verification plan.
+
+## Notes
+
+File tools resolve relative paths against `MY_AGENT_WORKSPACE` or the current
+working directory. Keep PrismX runtime data and user project workspace files
+conceptually separate: PrismX writes its own state under `data/`, while the Web
+Files tab only reads a user-selected browser workspace folder.
