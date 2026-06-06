@@ -1,4 +1,4 @@
-# my_agent2 接口文档
+# PrismX 接口文档
 
 > 面向前后端对接的完整 API 参考文档
 > 版本: feat/context-memory-tree-fusion · 更新: 2026-05-24
@@ -7,7 +7,7 @@
 
 ## 1. 系统概述
 
-my_agent2 是一个本地 Python Agent 框架。核心差异化能力在上下文 (Context) 和记忆 (Memory) 系统。
+PrismX 是一个本地 Python Agent 框架。核心差异化能力在上下文 (Context) 和记忆 (Memory) 系统。
 
 ### 1.1 模块架构
 
@@ -28,7 +28,7 @@ AgentApp (应用编排)
 ### 1.2 数据流
 
 ```
-用户消息 → TreeSession (sessions/{id}.jsonl)
+用户消息 → TreeSession (sessiontrees/{id}.jsonl)
     → /compact → CompactionEntry
     → SessionMemoryCommitter → ContextFS + MemoryGraph
     → RuntimeContextBuilder → 下一轮 system prompt
@@ -38,15 +38,15 @@ AgentApp (应用编排)
 
 ```
 {root}/
-├── sessions/           # 会话树 JSONL (原始事实源)
+├── sessiontrees/           # 会话树 JSONL (原始事实源)
 ├── memory/
 │   ├── context/
 │   │   ├── index.jsonl    # ContextObject 索引
 │   │   ├── links.jsonl    # MemoryGraph 链接
 │   │   ├── diffs.jsonl    # 变更审计日志
 │   │   └── mem/           # L2 正文文件
-│   ├── MEMORY.md          # 旧版兼容文件
-│   ├── history.jsonl      # 旧版历史
+│   ├── tree/              # Tree Memory 短期树内记忆
+│   ├── Wiki/              # Wiki-style 长期知识
 │   └── tokens.jsonl       # Token 用量记录
 ├── templates/
 │   └── system.md          # System prompt 模板
@@ -204,10 +204,10 @@ TreeSession JSONL 中每一行的基类型。
 ### 3.3 会话归档 URI
 
 ```
-ctx://sessions/archives/{yyyy}/{mm}/{dd}/{session_id}-{compaction_id}
+ctx://sessiontrees/archives/{yyyy}/{mm}/{dd}/{session_id}-{compaction_id}
 ```
 
-示例: `ctx://sessions/archives/2026/05/24/default-a1b2c3d4`
+示例: `ctx://sessiontrees/archives/2026/05/24/default-a1b2c3d4`
 
 ### 3.4 slug 生成规则
 
@@ -237,7 +237,7 @@ ctx://sessions/archives/{yyyy}/{mm}/{dd}/{session_id}-{compaction_id}
 查询 URI 的出向 MemoryGraph 链接，按 confidence 降序。
 
 #### `remember_note(note, category="events", title=None) → str`
-写入结构化记忆。返回生成的 URI。同 category + 同 title 自动覆盖旧记忆。同时写入旧版 MEMORY.md 做兼容。
+写入结构化记忆。返回生成的 URI。同 category + 同 title 自动覆盖旧记忆。不再写入旧版 MEMORY.md。
 
 #### `commit_session_archive(session_uri, summary, operations, metadata) → str`
 提交会话归档。写入 archive ContextObject + 处理 operations（校验 category、写入记忆、添加 derived_from 链接、auto_link）。非法 operation 进 quarantine。
@@ -422,7 +422,6 @@ MVP 实现: `LocalContextBackend`，委托给 MemoryStore。
 | `MY_AGENT_MAX_CONTEXT_TOKENS` | `64000` | 上下文窗口大小 |
 | `MY_AGENT_COMPACT_THRESHOLD` | `0.7` | 自动压缩触发阈值（input_tokens / max_context_tokens ≥ 此值时触发） |
 | `MY_AGENT_COMPACT_KEEP_MESSAGES` | `8` | 压缩时最少保留消息数 |
-| `MY_AGENT_STARTUP_COMPACTION` | `0` | 启动时是否压缩旧历史 (0/1) |
 | `MY_AGENT_WORKSPACE` | 当前目录 | 工作区根目录 |
 | `MY_AGENT_SESSION_ID` | `default` | 会话 ID（不存在则自动创建） |
 | `MY_AGENT_RUNTIME_CONTEXT_LIMIT` | `6` | RuntimeContext 搜索返回条数 |
@@ -469,7 +468,7 @@ MVP 实现: `LocalContextBackend`，委托给 MemoryStore。
 每行一条 MemoryGraph 链接:
 
 ```jsonl
-{"source_uri": "mem://user/preferences/theme", "target_uri": "ctx://sessions/archives/2026/05/24/default-c1", "relation": "derived_from", "confidence": 0.95, "reason": "extracted from compaction"}
+{"source_uri": "mem://user/preferences/theme", "target_uri": "ctx://sessiontrees/archives/2026/05/24/default-c1", "relation": "derived_from", "confidence": 0.95, "reason": "extracted from compaction"}
 ```
 
 ### 8.3 diffs.jsonl
@@ -480,7 +479,7 @@ MVP 实现: `LocalContextBackend`，委托给 MemoryStore。
 {"action": "remember", "uri": "mem://user/preferences/theme", "reason": "manual remember", "ts": "2026-05-24T10:00:00+00:00"}
 ```
 
-### 8.4 sessions/{session_id}.jsonl
+### 8.4 sessiontrees/{session_id}.jsonl
 
 每行一个 SessionEntry 的 JSON 序列化:
 
@@ -514,7 +513,7 @@ MVP 实现: `LocalContextBackend`，委托给 MemoryStore。
 | 变量 | 来源 | 说明 |
 |------|------|------|
 | `{{ workspace }}` | AgentApp.workspace | 工作区绝对路径 |
-| `{{ memory }}` | MemoryStore.read_memory() | 旧版 MEMORY.md 内容 |
+| `{{ memory }}` | Runtime Recall | TGM 运行时召回内容 |
 | `{{ user_profile }}` | MemoryStore.read_user() | 用户画像 (USER.md) |
 | `{{ skills_summary }}` | SkillsLoader.summary() | 可用技能摘要 |
 | `{{ active_skills }}` | SkillsLoader.active_context() | 始终激活的技能 |
@@ -559,12 +558,13 @@ RuntimeContextBuilder 额外排除:
 ## 11. 关键设计约束
 
 1. **TreeSession 是唯一原始会话事实源** — 不在 ContextFS 中重复存 raw message
-2. **禁止** `memory/context/sessions/current/messages.jsonl`
+2. **禁止** `memory/context/sessiontrees/current/messages.jsonl`
 3. **记忆提取只在 compaction 后触发** — 不每次对话都写长期记忆
-4. **旧版 MEMORY.md / history.jsonl / compactions.md 保留兼容** — 仅兼容，非核心
+4. **旧版线性记忆已移除** — 不再创建 `MEMORY.md`、`history.jsonl` 或 `compactions.md`
 5. **MVP 纯本地文件系统** — 不用向量数据库、embedding、外部服务
 6. **新增类别需同步 4 处** — `_operation_to_uri`, `_category_prefix`, `valid_categories`, `render_memory.categories`
 
 ---
 
 > 文档版本: 1.0 · 生成日期: 2026-05-24
+

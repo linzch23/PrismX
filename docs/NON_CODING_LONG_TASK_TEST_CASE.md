@@ -5,10 +5,10 @@
 
 ```powershell
 
-cd "D:\agent架构比赛\my_agent2"
+cd "D:\agent架构比赛\PrismX"
 $env:PYTHONPATH="src"
 $env:MY_AGENT_WEB_PORT="8766"
-.\.venv\Scripts\python.exe -m my_agent2.server
+.\.venv\Scripts\python.exe -m prismx.server
 
 ```
 
@@ -276,7 +276,7 @@ $env:MY_AGENT_WEB_PORT="8766"
 
 - 会话树出现 `compaction` 节点。
 - `SessionMemoryCommitter（会话记忆提交器）` 应把会话归档写入 ContextFS。
-- `memory/context/index.jsonl` 应出现新的 `ctx://sessions/archives/...` 记录。
+- `memory/context/index.jsonl` 应出现新的 `ctx://sessiontrees/archives/...` 记录。
 - 如果提取出了长期记忆，应出现新的 `mem://...` 记录。
 
 ## 最终召回测试
@@ -325,4 +325,5 @@ $env:MY_AGENT_WEB_PORT="8766"
 
 - `search_context`、`read_context`、`show_context_links`、`remember` 是 Agent 工具，不是独立 HTTP API。
 - 前端右侧可视化应从 `runs.toolCalls` 或 `toolEvents` 驱动。
-- 清空 `memory/` 不等于清空 `sessions/`；如果要完全从零测试，也可以另行清空 `sessions/`，但会失去现有 fork 演示数据。
+- 清空 `memory/` 不等于清空 `sessiontrees/`；如果要完全从零测试，也可以另行清空 `sessiontrees/`，但会失去现有 fork 演示数据。
+

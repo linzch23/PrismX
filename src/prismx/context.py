@@ -22,7 +22,6 @@ class ContextBuilder:
             "workspace": str(workspace),
             "active_skills": active_skills,
             "skills_summary": self.skills_loader.summary(exclude=always_names),
-            "memory": self.memory_store.read_memory(),
             "user_profile": self.memory_store.read_user(),
             "runtime_context": runtime_context,
         }
@@ -48,9 +47,12 @@ class RuntimeContextBuilder:
         self.backend = backend
         self.limit = limit
         self.max_chars = max_chars
+        self.last_results: list[dict[str, Any]] = []
 
-    def build(self, query: str) -> str:
+    def build(self, query: str, recall_scope: dict[str, Any] | None = None) -> str:
         results = self.backend.search(query, limit=self.limit)
+        results = self._rank_branch_safe(results, recall_scope or {})
+        self.last_results = results
         if not results:
             return "(No runtime context recalled.)"
 
@@ -75,6 +77,9 @@ class RuntimeContextBuilder:
             entry = (
                 f"- URI: {uri}\n"
                 f"  Trust: {result.get('trust_score', '?')}\n"
+                f"  Recall reason: {result.get('recall_reason', 'keyword match')}\n"
+                f"  Source: session={_metadata(result).get('source_session', '?')} "
+                f"branch={_metadata(result).get('source_branch', '?')}\n"
                 f"  Updated: {result.get('updated_at', '?')}\n"
                 f"  Matched: {result.get('title', '?')}\n"
                 f"  Summary: {result.get('abstract', result.get('overview', ''))}{link_lines}"
@@ -85,3 +90,53 @@ class RuntimeContextBuilder:
             total += len(entry)
 
         return "\n".join(lines) if len(lines) > 1 else "(No runtime context recalled.)"
+
+    def _rank_branch_safe(
+        self,
+        results: list[dict[str, Any]],
+        scope: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        active_branch_ids = set(scope.get("active_branch_entry_ids") or [])
+        session_id = scope.get("session_id")
+        project = scope.get("project")
+        ranked = []
+        for index, result in enumerate(results):
+            if result.get("status") in {"archived", "quarantine"}:
+                continue
+            if result.get("sensitivity") in {"sensitive", "internal"}:
+                continue
+            meta = _metadata(result)
+            score = float(result.get("trust_score") or 0.0)
+            reason = ["base_match"]
+            source_branch = meta.get("source_branch")
+            source_session = meta.get("source_session")
+            knowledge_type = meta.get("knowledge_type") or result.get("context_type")
+            if source_branch and source_branch in active_branch_ids:
+                score += 3.0
+                reason.append("active_branch")
+            if source_session and source_session == session_id:
+                score += 2.0
+                reason.append("same_session")
+            if project and meta.get("project") == project:
+                score += 1.2
+                reason.append("same_project")
+            if str(result.get("uri", "")).startswith("mem://project/"):
+                score += 0.8
+                reason.append("project_scope")
+            if str(result.get("uri", "")).startswith("mem://user/"):
+                score += 0.4
+                reason.append("user_scope")
+            if knowledge_type in {"architecture", "pattern", "project", "user", "research"}:
+                score += 0.2
+                reason.append(str(knowledge_type))
+            item = dict(result)
+            item["recall_score"] = score
+            item["recall_reason"] = ", ".join(reason)
+            ranked.append((score, -index, item))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return [item for _, _, item in ranked[: self.limit]]
+
+
+def _metadata(result: dict[str, Any]) -> dict[str, Any]:
+    meta = result.get("metadata")
+    return meta if isinstance(meta, dict) else {}

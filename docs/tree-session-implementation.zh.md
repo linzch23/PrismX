@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文说明当前 `my_agent2` 中 Tree Session（树形会话）的具体实现。它面向后续 context（上下文）和 memory（记忆）模块改造，重点回答三个问题：
+本文说明当前 `PrismX` 中 Tree Session（树形会话）的具体实现。它面向后续 context（上下文）和 memory（记忆）模块改造，重点回答三个问题：
 
 - 当前会话树如何持久化、恢复和构建模型上下文。
 - 分支、跳转、克隆、标签、压缩是如何落到代码里的。
@@ -17,7 +17,7 @@
 | Commit | 作用 | 影响 |
 |---|---|---|
 | `1a561ce` | 新增 Pi-compatible tree sessions | 引入 `tree_session.py`、CLI 树命令、runner 回调接入和测试。 |
-| `315203c` | 默认关闭 legacy startup compaction（旧线性启动压缩） | 避免启动时自动压缩 `memory/history.jsonl`，让 `sessions/*.jsonl` 成为新的会话事实源。 |
+| `315203c` | 默认关闭 legacy startup compaction（旧线性启动压缩） | 避免启动时自动压缩 `memory/history.jsonl`，让 `sessiontrees/*.jsonl` 成为新的会话事实源。 |
 | `7ac39e0` | 优化上下文压缩 | 增加结构化 summarization prompt（摘要提示词）、previous summary 更新、文件操作保留、安全压缩边界。 |
 | `e094cd5` | 界面友好优化 | README/CLI 中文化，删除独立 Pi attribution 文档，把会话树说明并入主文档。 |
 
@@ -62,13 +62,13 @@ flowchart TD
     App --> Tree["TreeSessionManager（树形会话管理器）"]
     App --> Runner["AgentRunner（模型/工具循环）"]
     Runner --> Tools["ToolRegistry（工具注册中心）"]
-    Tree --> Storage["sessions/{session_id}.jsonl"]
+    Tree --> Storage["sessiontrees/{session_id}.jsonl"]
     Tree --> Context["buildModelContext（构建模型上下文）"]
     Context --> Runner
     Tree --> Compact["compactActiveBranch（压缩活跃分支）"]
 ```
 
-核心设计是：`sessions/*.jsonl` 是会话事实源。程序启动后重放 JSONL 文件，恢复内存索引，再基于当前 `activeLeafId` 构建模型上下文。
+核心设计是：`sessiontrees/*.jsonl` 是会话事实源。程序启动后重放 JSONL 文件，恢复内存索引，再基于当前 `activeLeafId` 构建模型上下文。
 
 ## 5. 数据模型
 
@@ -146,7 +146,7 @@ parent_id = session.activeLeafId if parent_id is None else parent_id
 
 1. 校验父节点存在。
 2. 生成规范化 entry。
-3. 追加写入 `sessions/{session_id}.jsonl`。
+3. 追加写入 `sessiontrees/{session_id}.jsonl`。
 4. 更新内存索引。
 5. 如果是树节点，追加一条 `session_state`，把 `activeLeafId` 移到新节点。
 
@@ -275,7 +275,7 @@ AgentApp.compact_now()
   -> TreeSessionManager.compactActiveBranch()
 ```
 
-普通自然语言不会触发压缩。legacy startup compaction 默认关闭，只有 `MY_AGENT_STARTUP_COMPACTION=true` 时才会处理旧 `memory/history.jsonl`。
+普通自然语言不会触发压缩；旧 startup compaction 已删除。
 
 ### 10.2 压缩对象
 
@@ -406,20 +406,20 @@ class CompactionEntry:
 
 ## 13. 与旧 memory/history 的关系
 
-当前系统仍保留：
+当前系统已删除旧线性记忆文件：
 
-- `memory/history.jsonl`
-- `memory/MEMORY.md`
-- `memory/compactions.md`
-- `templates/USER.md`
+- 旧 `memory/history.jsonl`（已删除）
+- 旧 `memory/MEMORY.md`（已删除）
+- 旧 `memory/compactions.md`（已删除）
+当前仍保留 `templates/USER.md` 作为用户画像模板。
 
 但树形会话的事实源已经是：
 
 ```text
-sessions/{session_id}.jsonl
+sessiontrees/{session_id}.jsonl
 ```
 
-`memory/history.jsonl` 仍由 `MemoryStore.append_history()` 写入，更多是 legacy compatibility（旧兼容输出）。后续 context/memory 改造不应再以它作为主会话输入。
+后续 context/memory 改造不应再以旧线性 history 作为主会话输入。
 
 ## 14. 对后续 Context/Memory 改造的建议
 
@@ -435,7 +435,7 @@ RuntimeContextBuilder = per-turn recall renderer（每轮召回渲染器）
 不要再新增并行的：
 
 ```text
-memory/context/sessions/current/messages.jsonl
+memory/context/sessiontrees/current/messages.jsonl
 ```
 
 原因：
@@ -481,3 +481,5 @@ memory/context/sessions/current/messages.jsonl
 - 为后续 ContextFS 和 MemoryGraph 提供稳定的 raw session 事实源。
 
 因此，后续比赛方案应围绕 TreeSession 扩展，而不是绕过它重建一套线性 session capture。
+
+

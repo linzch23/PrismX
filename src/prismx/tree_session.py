@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Append-only tree sessions for my_agent2.
+"""Append-only tree sessions for prismx.
 
 本模块实现 JSONL 作为事实来源的会话树：每个条目都有 `id` 和 `parentId`，
 当前上下文由 active leaf 所在分支构造，并支持标签、分支摘要、上下文压缩
@@ -19,6 +19,26 @@ from uuid import uuid4
 
 
 SESSION_VERSION = 1
+
+EVENT_MESSAGE_APPENDED = "message_appended"
+EVENT_TOOL_CALLED = "tool_called"
+EVENT_TOOL_RESULT_RECORDED = "tool_result_recorded"
+EVENT_BRANCH_JUMPED = "branch_jumped"
+EVENT_BRANCH_FORKED = "branch_forked"
+EVENT_BRANCH_CLONED = "branch_cloned"
+EVENT_BRANCH_LABELED = "branch_labeled"
+EVENT_COMPACTION_CREATED = "compaction_created"
+EVENT_KNOWLEDGE_COMMITTED = "knowledge_committed"
+EVENT_SESSION_RESUMED = "session_resumed"
+EVENT_ENTRY_APPENDED = "entry_appended"
+
+STATE_REASON_EVENTS = {
+    "jump": EVENT_BRANCH_JUMPED,
+    "fork": EVENT_BRANCH_FORKED,
+    "clone": EVENT_BRANCH_CLONED,
+    "resume": EVENT_SESSION_RESUMED,
+    "append": EVENT_ENTRY_APPENDED,
+}
 
 SUMMARIZATION_SYSTEM_PROMPT = """You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
 
@@ -302,6 +322,17 @@ class TreeSession:
     updatedAt: str = ""
 
 
+@dataclass
+class ExperienceEvent:
+    id: str
+    type: str
+    entryType: str
+    sessionId: str
+    parentId: str | None
+    timestamp: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class SummarizerProtocol(Protocol):
     def summarize(
         self,
@@ -490,15 +521,32 @@ class SimpleTokenEstimator:
 
 
 class JsonlSessionStorage:
-    def __init__(self, session_dir: Path) -> None:
+    def __init__(self, session_dir: Path, *, data_root: Path | None = None) -> None:
         self.session_dir = Path(session_dir)
+        self.data_root = Path(data_root) if data_root is not None else None
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        if self.data_root is not None:
+            (self.data_root / "sessions").mkdir(parents=True, exist_ok=True)
+        self._session_tree_ids: dict[str, str] = {}
+
+    def bindSessionTree(self, session_id: str, tree_id: str) -> None:
+        self._session_tree_ids[session_id] = tree_id
 
     def getSessionFilePath(self, session_id: str) -> Path:
+        tree_id = self._session_tree_ids.get(session_id)
+        if tree_id and self.data_root is not None:
+            return self._data_session_path(tree_id, session_id)
+        if self.data_root is not None:
+            matches = sorted((self.data_root / "sessions").glob(f"*/sessions/{session_id}.jsonl"))
+            if matches:
+                return matches[0]
         return self.session_dir / f"{session_id}.jsonl"
 
     def listSessions(self) -> list[str]:
-        return sorted(path.stem for path in self.session_dir.glob("*.jsonl"))
+        ids = {path.stem for path in self.session_dir.glob("*.jsonl")}
+        if self.data_root is not None:
+            ids.update(path.stem for path in (self.data_root / "sessions").glob("*/sessions/*.jsonl"))
+        return sorted(ids)
 
     def append_line(self, session_id: str, entry: SessionEntry) -> None:
         path = self.getSessionFilePath(session_id)
@@ -521,6 +569,16 @@ class JsonlSessionStorage:
 
     def deleteSession(self, session_id: str) -> None:
         self.getSessionFilePath(session_id).unlink(missing_ok=True)
+        self._session_tree_ids.pop(session_id, None)
+
+    def _data_session_path(self, tree_id: str, session_id: str) -> Path:
+        safe_tree_id = _safe_storage_id(tree_id)
+        safe_session_id = _safe_storage_id(session_id)
+        return self.data_root / "sessions" / safe_tree_id / "sessions" / f"{safe_session_id}.jsonl"
+
+
+def _safe_storage_id(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in str(value))
 
 
 def _now() -> str:
@@ -558,6 +616,36 @@ def _to_json(entry: SessionEntry) -> dict[str, Any]:
     data = _json_safe(asdict(entry))
     data["type"] = entry.type
     return data
+
+
+def _entry_to_experience_event(entry: SessionEntry) -> ExperienceEvent:
+    event_type = entry.metadata.get("eventType")
+    if not event_type:
+        if isinstance(entry, MessageEntry):
+            event_type = EVENT_MESSAGE_APPENDED
+        elif isinstance(entry, ToolCallEntry):
+            event_type = EVENT_TOOL_CALLED
+        elif isinstance(entry, ToolResultEntry):
+            event_type = EVENT_TOOL_RESULT_RECORDED
+        elif isinstance(entry, LabelEntry):
+            event_type = EVENT_BRANCH_LABELED
+        elif isinstance(entry, CompactionEntry):
+            event_type = EVENT_COMPACTION_CREATED
+        elif isinstance(entry, SessionStateEntry):
+            event_type = STATE_REASON_EVENTS.get(entry.reason, EVENT_ENTRY_APPENDED)
+        elif isinstance(entry, CustomEntry) and entry.customType:
+            event_type = entry.customType
+        else:
+            event_type = entry.type
+    return ExperienceEvent(
+        id=entry.id,
+        type=str(event_type),
+        entryType=entry.type,
+        sessionId=entry.sessionId,
+        parentId=entry.parentId,
+        timestamp=entry.timestamp,
+        metadata=dict(entry.metadata),
+    )
 
 
 def _append_file_operations(summary: str, entries: list[SessionEntry]) -> str:
@@ -707,12 +795,13 @@ class TreeSessionManager:
         self,
         *,
         session_dir: Path | None = None,
+        data_root: Path | None = None,
         cwd: str = "",
         summarizer: SummarizerProtocol | Callable[..., str] | None = None,
         token_estimator: TokenEstimator | None = None,
         compact_keep_messages: int = 4,
     ) -> None:
-        self.storage = JsonlSessionStorage(session_dir or Path(".sessions"))
+        self.storage = JsonlSessionStorage(session_dir or Path(".sessions"), data_root=data_root)
         self.sessions: dict[str, TreeSession] = {}
         self.compact_keep_messages = compact_keep_messages
         self.summarizer = self._coerce_summarizer(summarizer)
@@ -723,8 +812,17 @@ class TreeSessionManager:
             first = self.storage.listSessions()[0]
             self.loadSession(first)
 
-    def createSession(self, session_id: str | None = None, *, cwd: str = "", title: str | None = None) -> str:
+    def createSession(
+        self,
+        session_id: str | None = None,
+        *,
+        cwd: str = "",
+        title: str | None = None,
+        tree_id: str | None = None,
+    ) -> str:
         session_id = session_id or uuid4().hex
+        if tree_id:
+            self.storage.bindSessionTree(session_id, tree_id)
         if self.storage.getSessionFilePath(session_id).exists():
             raise FileExistsError(self.storage.getSessionFilePath(session_id))
         now = _now()
@@ -827,7 +925,10 @@ class TreeSessionManager:
             {
                 "type": "message",
                 "message": _json_safe(message),
-                "metadata": {"contextLayer": ContextLayer.L2_SELECTED_MESSAGES.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L2_SELECTED_MESSAGES.name,
+                    "eventType": EVENT_MESSAGE_APPENDED,
+                },
             },
         )
 
@@ -839,7 +940,10 @@ class TreeSessionManager:
             {
                 "type": "tool_call",
                 "toolCall": _json_safe(tool_call),
-                "metadata": {"contextLayer": ContextLayer.L0_METADATA.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L0_METADATA.name,
+                    "eventType": EVENT_TOOL_CALLED,
+                },
             },
         )
 
@@ -851,7 +955,10 @@ class TreeSessionManager:
             {
                 "type": "tool_result",
                 "toolResult": _json_safe(tool_result),
-                "metadata": {"contextLayer": ContextLayer.L3_TOOL_EVIDENCE.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L3_TOOL_EVIDENCE.name,
+                    "eventType": EVENT_TOOL_RESULT_RECORDED,
+                },
             },
         )
 
@@ -935,9 +1042,44 @@ class TreeSessionManager:
                 "type": "label",
                 "targetId": entry_id,
                 "label": label,
-                "metadata": {"contextLayer": ContextLayer.L0_METADATA.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L0_METADATA.name,
+                    "eventType": EVENT_BRANCH_LABELED,
+                },
             },
         )
+
+    def appendKnowledgeCommit(
+        self,
+        session_id: str,
+        *,
+        compaction_id: str,
+        knowledge_uris: list[str],
+        archive_uri: str,
+        parent_id: str | None = None,
+    ) -> str:
+        session = self._session(session_id)
+        return self.append_entry(
+            session_id,
+            session.activeLeafId if parent_id is None else parent_id,
+            {
+                "type": "custom",
+                "customType": EVENT_KNOWLEDGE_COMMITTED,
+                "data": {
+                    "compaction_id": compaction_id,
+                    "knowledge_uris": list(knowledge_uris),
+                    "archive_uri": archive_uri,
+                },
+                "metadata": {
+                    "contextLayer": ContextLayer.L0_METADATA.name,
+                    "eventType": EVENT_KNOWLEDGE_COMMITTED,
+                },
+            },
+        )
+
+    def experienceEvents(self, session_id: str) -> list[ExperienceEvent]:
+        session = self._session(session_id)
+        return [_entry_to_experience_event(entry) for entry in session.entries]
 
     def get_label(self, session_id: str, entry_id: str) -> str | None:
         return self._session(session_id).labels.get(entry_id)
@@ -973,7 +1115,12 @@ class TreeSessionManager:
                 "commonAncestorId": common,
                 "summarizedEntryIds": [entry.id for entry in summary_entries],
                 "summary": summary,
-                "metadata": {"contextLayer": ContextLayer.L1_SUMMARY.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L1_SUMMARY.name,
+                    "eventType": "branch_summary_created",
+                    "sourceBranchLeafId": oldLeafId,
+                    "targetEntryId": targetId,
+                },
             },
         )
         self._append_state(session_id, entry_id, "jump")
@@ -1044,7 +1191,11 @@ class TreeSessionManager:
                 "firstKeptEntryId": first_kept.id,
                 "tokenEstimateBefore": token_before,
                 "tokenEstimateAfter": token_after,
-                "metadata": {"contextLayer": ContextLayer.L1_SUMMARY.name},
+                "metadata": {
+                    "contextLayer": ContextLayer.L1_SUMMARY.name,
+                    "eventType": EVENT_COMPACTION_CREATED,
+                    "sourceBranchLeafId": self._session(session_id).activeLeafId,
+                },
             },
         )
 
@@ -1099,6 +1250,8 @@ class TreeSessionManager:
     jumpToEntry = jumpToEntry
     forkFromEntry = forkFromEntry
     cloneActiveBranch = cloneActiveBranch
+    append_knowledge_commit = appendKnowledgeCommit
+    experience_events = experienceEvents
     add_label = addLabel
     createBranchSummary = createBranchSummary
     compactActiveBranch = compactActiveBranch
@@ -1124,7 +1277,11 @@ class TreeSessionManager:
             timestamp=_now(),
             activeLeafId=active_leaf_id,
             reason=reason,
-            metadata={"contextLayer": ContextLayer.L0_METADATA.name},
+            metadata={
+                "contextLayer": ContextLayer.L0_METADATA.name,
+                "eventType": STATE_REASON_EVENTS.get(reason, EVENT_ENTRY_APPENDED),
+                "activeLeafId": active_leaf_id,
+            },
         )
         self.storage.append_line(session_id, entry)
         self._apply_entry(session, entry)

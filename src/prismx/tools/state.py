@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .base import Tool, object_schema
+from ..runtime_recall import LONG_TERM_SPECIAL_MEMORY_TYPES
 
 
 VALID_STATUSES = {"pending", "in_progress", "completed"}
@@ -77,7 +78,12 @@ class UpdateTodosTool(Tool):
 
 class RememberTool(Tool):
     name = "remember"
-    description = "Append a durable note to long-term memory. category: preferences|events|decisions|constraints|cases|patterns|tools|skills|entities|open_tasks|profile"
+    description = (
+        "Write reusable memory. By default this writes Tree Memory for the current session tree. "
+        "Special memory_type values user_profile, user_feedback, project_state, and reference "
+        "write Tree Memory first and then traceable Long-term Knowledge. Use scope='long_term' to dual-write durable facts. "
+        "category: preferences|events|decisions|constraints|cases|patterns|tools|skills|entities|open_tasks|profile"
+    )
 
     def __init__(self, memory_store) -> None:
         self.memory_store = memory_store
@@ -88,20 +94,55 @@ class RememberTool(Tool):
             "note": {"type": "string", "minLength": 1},
             "category": {"type": "string"},
             "title": {"type": "string"},
+            "scope": {"type": "string", "enum": ["tree", "long_term"]},
+            "memory_type": {
+                "type": "string",
+                "enum": [
+                    "conclusion",
+                    "decision",
+                    "constraint",
+                    "todo",
+                    "finding",
+                    "hypothesis",
+                    "discarded_option",
+                    "fact",
+                    "failure",
+                    "partial_fix",
+                    "user_profile",
+                    "user_feedback",
+                    "project_state",
+                    "reference",
+                ],
+            },
         }, required=["note"])
 
-    def execute(self, note: str, category: str = "events", title: str | None = None) -> str:
+    def execute(
+        self,
+        note: str,
+        category: str = "events",
+        title: str | None = None,
+        scope: str = "tree",
+        memory_type: str | None = None,
+    ) -> str:
         valid = {"profile", "preferences", "entities", "events",
                  "decisions", "constraints", "open_tasks",
-                 "cases", "patterns", "tools", "skills"}
+                 "cases", "patterns", "tools", "skills",
+                 *LONG_TERM_SPECIAL_MEMORY_TYPES}
         if category not in valid:
             return f"Error: invalid category '{category}'. Valid: {', '.join(sorted(valid))}"
+        if hasattr(self.memory_store, "remember"):
+            uri = self.memory_store.remember(
+                note,
+                category=category,
+                title=title,
+                scope=scope,
+                memory_type=memory_type,
+            )
+            return f"Remembered: {uri}"
         if hasattr(self.memory_store, "remember_note"):
             uri = self.memory_store.remember_note(note, category=category, title=title)
             return f"Remembered: {uri}"
-        # legacy fallback
-        self.memory_store.append_memory(note)
-        return "Remembered."
+        return "Error: memory store does not support TGM remember."
 
 
 class LoadSkillTool(Tool):

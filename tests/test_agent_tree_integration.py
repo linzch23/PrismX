@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from my_agent2.loop import AgentApp
-from my_agent2.model_client import AgentMessage, TextBlock, ToolUseBlock, _to_openai_messages
-from my_agent2.tree_session import MessageEntry
+from prismx.loop import AgentApp
+from prismx.model_client import AgentMessage, TextBlock, ToolUseBlock, _to_openai_messages
+from prismx.tree_session import MessageEntry
 
 
 class FakeClient:
@@ -40,7 +40,7 @@ class AgentTreeIntegrationTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "templates").mkdir()
         (self.root / "templates" / "system.md").write_text(
-            "workspace={{ workspace }}\n{{ memory }}\n{{ user_profile }}\n{{ skills_summary }}",
+            "workspace={{ workspace }}\n{{ runtime_context }}\n{{ user_profile }}\n{{ skills_summary }}",
             encoding="utf-8",
         )
         (self.root / "sample.txt").write_text("secret\n", encoding="utf-8")
@@ -52,7 +52,6 @@ class AgentTreeIntegrationTests(unittest.TestCase):
                     "MY_AGENT_PROVIDER": "deepseek",
                     "MY_AGENT_MODEL": "fake-model",
                     "MY_AGENT_SESSION_ID": "",
-                    "MY_AGENT_STARTUP_COMPACTION": "0",
                 },
                 clear=False,
             )
@@ -65,7 +64,7 @@ class AgentTreeIntegrationTests(unittest.TestCase):
 
     def make_app(self, responses: list[AgentMessage]) -> tuple[AgentApp, FakeClient]:
         client = FakeClient(responses)
-        build_patch = patch("my_agent2.loop.build_model_client", return_value=client)
+        build_patch = patch("prismx.loop.build_model_client", return_value=client)
         self.patchers.append(build_patch)
         for patcher in self.patchers:
             patcher.start()
@@ -76,23 +75,12 @@ class AgentTreeIntegrationTests(unittest.TestCase):
         path = app.tree.getSessionFilePath(app.session_id)
         return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
-    def test_startup_compaction_is_disabled_by_default(self) -> None:
-        memory_dir = self.root / "memory"
-        memory_dir.mkdir()
-        (memory_dir / "history.jsonl").write_text(
-            "\n".join(
-                [
-                    json.dumps({"role": "user", "content": "old question"}),
-                    json.dumps({"role": "assistant", "content": "old answer"}),
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+    def test_sessiontree_starts_empty_without_legacy_history(self) -> None:
         app, client = self.make_app([])
 
         self.assertEqual(client.requests, [])
         self.assertTrue(app.tree.buildModelContext(app.session_id) == [])
+        self.assertTrue((self.root / "sessiontrees" / f"{app.session_id}.jsonl").exists())
 
     def test_ask_writes_user_and_assistant_entries_to_jsonl(self) -> None:
         app, client = self.make_app([AgentMessage([TextBlock("assistant reply")], "stop")])
@@ -205,3 +193,4 @@ class AgentTreeIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

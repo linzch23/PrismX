@@ -1,11 +1,11 @@
-# my_agent2
+# prismx
 
-`my_agent2` 是一个本地运行的通用型 Python Agent，面向命令行工作流、工具调用、
+`prismx` 是一个本地运行的通用型 Python Agent，面向命令行工作流、工具调用、
 会话树管理、上下文压缩和多 Agent 协作场景。
 
 ## 上下文与记忆架构
 
-my_agent2 采用多层上下文与记忆系统：
+prismx 采用多层上下文与记忆系统：
 
 - **TreeSession（树形会话）** — 追加式 JSONL 会话树，支持分支、跳转、分叉和克隆。原始会话数据的唯一事实来源。
 - **ContextFS（上下文文件系统）** — 持久化上下文/记忆对象存储，分为 L0（摘要）、L1（概览）和 L2（完整正文）三层。对象以 URI 寻址。
@@ -50,32 +50,14 @@ my_agent2 采用多层上下文与记忆系统：
 
 ## 快速开始
 
+### 1. 安装依赖并配置环境变量
+
 ```bash
 uv sync
 cp .env.example .env
-# 编辑 .env，至少填写 DEEPSEEK_API_KEY
-
-uv run my-agent2
 ```
 
-在这台 Mac 上，更稳定的启动方式是：
-
-```bash
-./run.sh
-```
-
-`run.sh` 会自动定位项目目录、设置 `PYTHONPATH`、切换到仓库根目录，并使用虚拟环境里的
-Python 入口启动程序。这样可以避免终端当前目录和 editable install 带来的导入问题。
-
-启动本地 Web 工作台：
-
-```bash
-./run_web.sh
-```
-
-默认监听 `http://127.0.0.1:8765`。Web 工作台复用同一个 `AgentApp` 应用层，
-通过 HTTP/SSE 暴露聊天流、会话树、active branch、context debug、工具、MCP 和 team 状态。
-会话仍然持久化在 `sessions/*.jsonl`，JSONL 仍是事实来源。
+然后编辑 `.env`，至少填写 `DEEPSEEK_API_KEY`。
 
 默认 `.env` 配置使用 DeepSeek：
 
@@ -86,12 +68,63 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 MY_AGENT_MAX_CONTEXT_TOKENS=64000
 MY_AGENT_COMPACT_THRESHOLD=0.7
 MY_AGENT_COMPACT_KEEP_MESSAGES=8
-MY_AGENT_STARTUP_COMPACTION=0
 ```
+
+### 2. 选择启动方式
+
+推荐优先使用 `uv` 命令启动。
+
+启动命令行 Agent：
+
+```bash
+uv run prismx
+```
+
+启动本地 Web 工作台：
+
+```bash
+uv run prismx-web
+```
+
+Web 工作台默认监听：
+
+```text
+http://127.0.0.1:8765
+```
+
+如果 `uv run prismx-web` 没有识别到入口命令，可以改用模块方式启动。
+
+macOS / Linux：
+
+```bash
+PYTHONPATH=src uv run python -m prismx.server
+```
+
+Windows PowerShell：
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m prismx.server
+```
+
+仓库也提供了两个等价的脚本入口，适合希望固定项目根目录和解释器路径时使用：
+
+```bash
+./run.sh
+./run_web.sh
+```
+
+其中：
+
+- `./run.sh` 启动命令行 Agent。
+- `./run_web.sh` 启动本地 Web 工作台。
+- 脚本会自动定位项目根目录、设置 `PYTHONPATH`，并使用 `.venv/bin/python` 启动程序。
+
+Web 工作台复用同一个 `AgentApp` 应用层，通过 HTTP/SSE 暴露聊天流、会话树、active branch、
+context debug、工具、MCP 和 team 状态。会话仍然持久化在 `sessiontrees/*.jsonl`，JSONL 仍是事实来源。
 
 ## MCP 工具
 
-`my_agent2` 可以连接外部 MCP server，并把远端工具暴露给 Agent 使用。配置文件位于项目根目录的
+`prismx` 可以连接外部 MCP server，并把远端工具暴露给 Agent 使用。配置文件位于项目根目录的
 `mcp_servers.json`。
 
 示例：
@@ -143,7 +176,7 @@ MY_AGENT_STARTUP_COMPACTION=0
 
 ## 会话树与上下文压缩
 
-会话持久化在 `sessions/` 下的 append-only JSONL 文件里。JSONL 文件是事实来源；
+会话持久化在 `sessiontrees/` 下的 append-only JSONL 文件里。JSONL 文件是事实来源；
 程序启动时会通过重放文件重建内存索引。
 
 `/compact` 会在当前 active branch 上追加一个 `compaction` 条目：
@@ -158,7 +191,7 @@ MY_AGENT_STARTUP_COMPACTION=0
 ## 项目结构
 
 ```text
-src/my_agent2/
+src/prismx/
   cli.py              CLI 入口
   server.py           本地 Web/API 入口
   loop.py             应用装配
@@ -181,3 +214,4 @@ skills/
 ## 说明
 
 默认情况下，文件工具只允许访问配置的工作区。相对路径会从 `MY_AGENT_WORKSPACE` 或当前目录解析。
+

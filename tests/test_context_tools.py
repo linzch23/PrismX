@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir, make_contextfs_root
 
-from my_agent2.contextfs import ContextFS, ContextObject
-from my_agent2.memory_graph import MemoryGraph
-from my_agent2.tools.context import SearchContextTool, ReadContextTool, ListContextTool, ShowContextLinksTool
+from prismx.contextfs import ContextFS, ContextObject
+from prismx.memory_graph import MemoryGraph
+from prismx.tools.context import SearchContextTool, ReadContextTool, ListContextTool, ShowContextLinksTool
 
 
 class FakeMemoryStore:
@@ -75,30 +75,49 @@ class ContextToolsTests(unittest.TestCase):
 
 class RememberToolUpgradeTests(unittest.TestCase):
     def test_remember_with_note_only_still_works(self):
-        from my_agent2.tools.state import RememberTool
+        from prismx.tools.state import RememberTool
         calls = []
         class MemStore:
-            def remember_note(self, note, category="events", title=None):
-                calls.append((note, category, title))
-                return f"mem://user/events/2026/05/24/slug"
-            def append_memory(self, note):
-                pass  # legacy
+            def remember(self, note, category="events", title=None, scope="tree", memory_type=None):
+                calls.append((note, category, title, scope, memory_type))
+                return "tree://default/memory/slug"
         tool = RememberTool(MemStore())
         result = tool.execute(note="Important fact")
         self.assertIn("Remembered", result)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], "Important fact")
+        self.assertEqual(calls[0][3], "tree")
 
     def test_remember_with_category_and_title(self):
-        from my_agent2.tools.state import RememberTool
+        from prismx.tools.state import RememberTool
         calls = []
         class MemStore:
-            def remember_note(self, note, category="events", title=None):
-                calls.append((note, category, title))
-                return f"mem://user/preferences/2026/05/24/theme"
-            def append_memory(self, note):
-                pass
+            def remember(self, note, category="events", title=None, scope="tree", memory_type=None):
+                calls.append((note, category, title, scope, memory_type))
+                return "tree://default/memory/theme"
         tool = RememberTool(MemStore())
         result = tool.execute(note="Dark mode", category="preferences", title="Theme Preference")
         self.assertIn("Remembered", result)
-        self.assertEqual(calls[0], ("Dark mode", "preferences", "Theme Preference"))
+        self.assertEqual(calls[0], ("Dark mode", "preferences", "Theme Preference", "tree", None))
+
+    def test_special_memory_type_routes_through_gateway(self):
+        from prismx.memory import MemoryStore
+        from prismx.runtime_recall import TgmContextGateway
+        from prismx.tools.state import RememberTool
+        from prismx.tree_memory import TreeMemoryStore
+
+        tmp = make_temp_dir()
+        tree_memory = TreeMemoryStore(tmp / "memory" / "tree")
+        gateway = TgmContextGateway(
+            memory_store=MemoryStore(tmp / "memory"),
+            tree_memory=tree_memory,
+            tree_id_provider=lambda: "s1",
+        )
+        tool = RememberTool(gateway)
+
+        result = tool.execute(note="记住暗号123123", memory_type="user_profile", title="暗号")
+
+        self.assertIn("tree://s1/fold/", result)
+        self.assertIn("mem://user/", result)
+        self.assertEqual(len(tree_memory.items("s1")), 1)
+

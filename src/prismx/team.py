@@ -7,7 +7,11 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from .context import RuntimeContextBuilder
+from .context_backend import LocalContextBackend
+from .memory import MemoryStore
 from .runner import AgentRunner
+from .tree_session import TreeSessionManager
 from .tools.base import Tool
 from .tools.registry import ToolRegistry
 
@@ -223,6 +227,18 @@ class TeammateManager:
         return f"Spawned teammate {name!r} ({role})."
 
     def _teammate_loop(self, name: str, role: str, first_task: str) -> None:
+        member_dir = self.team_dir / name
+        member_dir.mkdir(parents=True, exist_ok=True)
+        memory = MemoryStore(member_dir / "memory")
+        tree = TreeSessionManager(
+            session_dir=member_dir / "sessions",
+            cwd=str(self.workspace),
+        )
+        session_id = "default"
+        if session_id not in tree.listSessions():
+            session_id = tree.createSession(session_id, cwd=str(self.workspace), title=name)
+        tree.resumeSession(session_id)
+        runtime_context = RuntimeContextBuilder(LocalContextBackend(memory), limit=4, max_chars=6000)
         system_prompt = (
             f"You are a persistent teammate agent named {name}. Your role is {role}.\n"
             f"Workspace: {self.workspace}\n\n"
@@ -240,7 +256,7 @@ class TeammateManager:
             max_tokens=self.max_tokens,
             max_turns=20,
         )
-        history = [{"role": "user", "content": first_task}]
+        tree.append_message(session_id, {"role": "user", "content": first_task})
         has_work = True
 
         while True:
@@ -255,13 +271,16 @@ class TeammateManager:
                     )
                     self._set_status(name, "shutdown")
                     return
-                history.append(
+                tree.append_message(
+                    session_id,
                     {
                         "role": "user",
-                        "content": "<inbox>\n"
-                        + json.dumps(message, ensure_ascii=False, indent=2)
-                        + "\n</inbox>",
-                    }
+                        "content": (
+                            "<inbox>\n"
+                            + json.dumps(message, ensure_ascii=False, indent=2)
+                            + "\n</inbox>"
+                        ),
+                    },
                 )
                 has_work = True
 
@@ -271,7 +290,39 @@ class TeammateManager:
 
             self._set_status(name, "working")
             try:
-                final = runner.step(history)
+                recall = runtime_context.build(
+                    tree.buildModelContext(session_id)[-1].get("content", "")
+                    if tree.buildModelContext(session_id)
+                    else "",
+                    recall_scope={
+                        "session_id": session_id,
+                        "active_branch_entry_ids": tree.debugBuildModelContext(session_id).get(
+                            "activePathEntryIds", []
+                        ),
+                        "project": self.workspace.name,
+                    },
+                )
+                runner.system_prompt = system_prompt + "\n\n" + recall
+
+                def record_tool_call(block) -> None:
+                    tree.append_tool_call(
+                        session_id,
+                        {"id": block.id, "name": block.name, "input": block.input},
+                    )
+
+                def record_tool_result(result: dict[str, str]) -> None:
+                    tree.append_tool_result(session_id, result)
+
+                final = runner.step(
+                    tree.buildModelContext(session_id),
+                    on_assistant_message=lambda content: tree.append_message(
+                        session_id,
+                        {"role": "assistant", "content": content},
+                    ),
+                    on_tool_call=record_tool_call,
+                    on_tool_result=record_tool_result,
+                    history_provider=lambda: tree.buildModelContext(session_id),
+                )
             except Exception as exc:
                 final = f"Error: teammate {name} failed: {exc}"
             if final.strip():

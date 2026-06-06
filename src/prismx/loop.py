@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,6 @@ except ModuleNotFoundError:  # pragma: no cover - allows stdlib-only unit tests
     def load_dotenv(*args, **kwargs):
         return False
 
-from .compactor import HistoryCompactor
 from .context import ContextBuilder
 from .memory import MemoryStore, TokenLog
 from .mcp_bridge import MCPClientManager
@@ -21,6 +21,11 @@ from .skills import SkillsLoader
 from .subagents import SubagentRegistry, SubagentSpec
 from .team import MessageBus, TeammateManager
 from .tree_session import LlmSummarizer, TreeSessionManager
+from .tree_memory import TreeMemoryStore
+from .knowledge_compiler import KnowledgeCompiler
+from .runtime_recall import TgmContextGateway, TgmRuntimeRecallBuilder
+from .runtime_paths import RuntimePaths
+from .working_set import WorkingSetBuilder, WorkingSet
 from .tools import (
     EditFileTool,
     GlobTool,
@@ -49,6 +54,7 @@ class AgentApp:
     def __init__(self, root: Path | None = None) -> None:
         load_dotenv()
         self.root = root or Path.cwd()
+        self.paths = RuntimePaths(self.root)
         self.workspace = Path(os.getenv("MY_AGENT_WORKSPACE", str(self.root))).resolve()
         self.provider = os.getenv("MY_AGENT_PROVIDER", "deepseek")
         default_model = "deepseek-chat" if self.provider == "deepseek" else "claude-3-5-sonnet-latest"
@@ -57,17 +63,17 @@ class AgentApp:
         self.max_context_tokens = int(os.getenv("MY_AGENT_MAX_CONTEXT_TOKENS", "64000"))
         self.compact_threshold = float(os.getenv("MY_AGENT_COMPACT_THRESHOLD", "0.7"))
         self.compact_keep_messages = int(os.getenv("MY_AGENT_COMPACT_KEEP_MESSAGES", "8"))
-        self.startup_compaction = _env_flag("MY_AGENT_STARTUP_COMPACTION", default=False)
 
         self.client = build_model_client(self.provider)
-        self.memory = MemoryStore(self.root / "memory", user_file=self.root / "templates" / "USER.md")
+        self.memory = MemoryStore(self.paths.knowledge, user_file=self.root / "templates" / "USER.md")
         self.tokens = TokenLog(self.root / "memory" / "tokens.jsonl")
         self.skills = SkillsLoader(self.root / "skills")
         self.todos = TodoStore()
         self.team_bus = MessageBus(self.root / ".team" / "inbox")
         self.mcp = MCPClientManager(self.root / "mcp_servers.json")
         self.tree = TreeSessionManager(
-            session_dir=self.root / "sessions",
+            session_dir=self.root / "sessiontrees",
+            data_root=self.paths.data,
             cwd=str(self.workspace),
             summarizer=LlmSummarizer(self.client, self.model),
             compact_keep_messages=self.compact_keep_messages,
@@ -83,24 +89,17 @@ class AgentApp:
         else:
             self.session_id = self.tree.createSession("default", cwd=str(self.workspace))
         self.tree.resumeSession(self.session_id)
+        self.active_tree_id = self.session_id
+        self.tree_memory = TreeMemoryStore(self.paths.tree_memory, legacy_root=self.paths.legacy_memory / "tree")
+        self.context_gateway = TgmContextGateway(
+            memory_store=self.memory,
+            tree_memory=self.tree_memory,
+            tree_id_provider=lambda: self.active_tree_id,
+            active_session_provider=lambda: self.session_id,
+            active_branch_provider=lambda: self.tree._session(self.session_id).activeLeafId,
+        )
 
         self.registry = self._build_registry()
-        self.compactor = HistoryCompactor(
-            client=self.client,
-            model=self.model,
-            memory_store=self.memory,
-            token_log=self.tokens,
-            keep_messages=self.compact_keep_messages,
-            max_context_tokens=self.max_context_tokens,
-            threshold=self.compact_threshold,
-        )
-        if self.startup_compaction:
-            unarchived = self.memory.load_unarchived_history()
-            if len(unarchived) >= 2:
-                try:
-                    self.compactor.compact_startup(unarchived)
-                except Exception as exc:
-                    print(f"[warning] startup compaction failed: {exc}")
 
         # SessionMemoryCommitter: bridges tree compaction → memory OS
         from .session_memory_committer import SessionMemoryCommitter, LlmMemoryExtractor
@@ -109,22 +108,27 @@ class AgentApp:
             tree=self.tree,
             memory_store=self.memory,
             extractor=LlmMemoryExtractor(self.client, self.model),
+            tree_memory=self.tree_memory,
+            knowledge_compiler=KnowledgeCompiler(),
+            tree_id_provider=lambda: self.active_tree_id,
         )
 
         context = ContextBuilder(self.root / "templates", self.skills, self.memory)
         self.system_prompt = context.build(workspace=self.workspace)
 
-        # RuntimeContextBuilder: per-turn memory recall
-        from .context_backend import LocalContextBackend
-        from .context import RuntimeContextBuilder
+        # TGM Runtime Recall: Active Path + Tree Memory + Long-term Knowledge.
         runtime_limit = int(os.getenv("MY_AGENT_RUNTIME_CONTEXT_LIMIT", "6"))
         runtime_chars = int(os.getenv("MY_AGENT_RUNTIME_CONTEXT_MAX_CHARS", "12000"))
         self.context_builder_obj = context  # keep reference to ContextBuilder instance
-        self.runtime_context_builder = RuntimeContextBuilder(
-            LocalContextBackend(self.memory),
+        self.runtime_context_builder = TgmRuntimeRecallBuilder(
+            self.context_gateway,
             limit=runtime_limit,
             max_chars=runtime_chars,
+            client=self.client,
+            model=self.model,
         )
+        self.working_set_builder = WorkingSetBuilder(self.tree)
+        self.last_working_set: WorkingSet | None = None
 
         self.runner = AgentRunner(
             client=self.client,
@@ -148,7 +152,7 @@ class AgentApp:
         registry.register(GrepTool(self.workspace))
         registry.register(LoadSkillTool(self.skills))
         registry.register(UpdateTodosTool(self.todos))
-        registry.register(RememberTool(self.memory))
+        registry.register(RememberTool(self.context_gateway))
 
         self.mcp.start()
         for tool in self.mcp.tools():
@@ -205,10 +209,10 @@ class AgentApp:
 
         # Context tools
         from .tools.context import SearchContextTool, ReadContextTool, ListContextTool, ShowContextLinksTool
-        registry.register(SearchContextTool(self.memory))
-        registry.register(ReadContextTool(self.memory))
-        registry.register(ListContextTool(self.memory))
-        registry.register(ShowContextLinksTool(self.memory))
+        registry.register(SearchContextTool(self.context_gateway))
+        registry.register(ReadContextTool(self.context_gateway))
+        registry.register(ListContextTool(self.context_gateway))
+        registry.register(ShowContextLinksTool(self.context_gateway))
 
         return registry
 
@@ -218,27 +222,109 @@ class AgentApp:
         on_text_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[Any], None] | None = None,
         on_tool_result: Callable[[dict[str, str]], None] | None = None,
+        workspace_context: str | None = None,
     ) -> str:
-        # Build runtime context from user input and rebuild system prompt
-        runtime_context = self.runtime_context_builder.build(user_input)
-        self.runner.system_prompt = self.context_builder_obj.build(
-            workspace=self.workspace, runtime_context=runtime_context,
-        )
-
         self.tree.append_message(self.session_id, {"role": "user", "content": user_input})
-        self.memory.append_history("user", user_input)
+        try:
+            event = self.tree_memory.record_event(
+                self.active_tree_id,
+                "user",
+                user_input,
+                session_id=self.session_id,
+                actor="user",
+            )
+            evidence = self.tree_memory.store_evidence(
+                self.active_tree_id,
+                "note",
+                user_input,
+                title="User message",
+                source_event_id=event.id,
+            )
+            event.evidence_ids.append(evidence.id)
+        except Exception:
+            pass
+        debug = self.tree.debugBuildModelContext(self.session_id)
+        runtime_context = self.runtime_context_builder.build(
+            user_input,
+            active_path_summary=_active_path_summary(debug),
+            recall_scope={
+                "session_id": self.session_id,
+                "active_branch_entry_ids": debug.get("activePathEntryIds", []),
+                "project": self.workspace.name,
+            },
+        )
+        self.last_working_set = self.working_set_builder.build(
+            session_id=self.session_id,
+            current_task=user_input,
+            task_state=self.todos.render(),
+            runtime_recall=runtime_context,
+            recall_results=self.runtime_context_builder.last_results,
+        )
+        self.runner.system_prompt = self.context_builder_obj.build(
+            workspace=self.workspace,
+            runtime_context=self.last_working_set.render(),
+        )
         prompt_history = self.tree.buildModelContext(self.session_id)
+        workspace_context_message = None
+        if workspace_context:
+            workspace_context_message = {
+                "role": "user",
+                "content": workspace_context,
+            }
+            prompt_history = [workspace_context_message, *prompt_history]
 
         def record_tool_call(block: Any) -> None:
             self.tree.append_tool_call(
                 self.session_id,
                 {"id": block.id, "name": block.name, "input": block.input},
             )
+            try:
+                event = self.tree_memory.record_event(
+                    self.active_tree_id,
+                    "tool_call",
+                    f"{block.name}: {block.input}",
+                    session_id=self.session_id,
+                    actor="agent",
+                    metadata={"tool_call_id": block.id, "tool": block.name},
+                )
+                evidence = self.tree_memory.store_evidence(
+                    self.active_tree_id,
+                    "code_snippet",
+                    json_dumps_safe(block.input),
+                    title=f"Tool call: {block.name}",
+                    source_event_id=event.id,
+                    metadata={"tool_call_id": block.id, "tool": block.name},
+                )
+                event.evidence_ids.append(evidence.id)
+            except Exception:
+                pass
             if on_tool_call:
                 on_tool_call(block)
 
         def record_tool_result(result: dict[str, str]) -> None:
             self.tree.append_tool_result(self.session_id, result)
+            try:
+                content = str(result.get("content") or result)
+                evidence_type = "error_log" if str(result.get("is_error") or "").lower() == "true" else "command_output"
+                event = self.tree_memory.record_event(
+                    self.active_tree_id,
+                    "tool_result",
+                    content,
+                    session_id=self.session_id,
+                    actor="tool",
+                    metadata={"tool_use_id": result.get("tool_use_id", "")},
+                )
+                evidence = self.tree_memory.store_evidence(
+                    self.active_tree_id,
+                    evidence_type,
+                    content,
+                    title="Tool result",
+                    source_event_id=event.id,
+                    metadata={"tool_use_id": result.get("tool_use_id", "")},
+                )
+                event.evidence_ids.append(evidence.id)
+            except Exception:
+                pass
             if on_tool_result:
                 on_tool_result(result)
 
@@ -251,10 +337,29 @@ class AgentApp:
             ),
             on_tool_call=record_tool_call,
             on_tool_result=record_tool_result,
-            history_provider=lambda: self.tree.buildModelContext(self.session_id),
+            history_provider=lambda: (
+                [workspace_context_message] if workspace_context_message else []
+            )
+            + self.tree.buildModelContext(self.session_id),
         )
-        self.memory.append_history("assistant", reply)
         self.history = self.tree.buildModelContext(self.session_id)
+        try:
+            event = self.tree_memory.record_event(
+                self.active_tree_id,
+                "assistant",
+                reply,
+                session_id=self.session_id,
+                actor="assistant",
+            )
+            self.tree_memory.store_evidence(
+                self.active_tree_id,
+                "note",
+                reply,
+                title="Assistant reply",
+                source_event_id=event.id,
+            )
+        except Exception:
+            pass
 
         # auto-compact when context usage exceeds threshold
         if self.tokens.should_compact(self.max_context_tokens, self.compact_threshold):
@@ -306,6 +411,18 @@ class AgentApp:
     def label_entry(self, entry_id: str, label: str) -> None:
         self.tree.addLabel(self.session_id, entry_id, label)
 
+    def working_context_debug(self) -> dict[str, Any]:
+        if self.last_working_set is not None:
+            return self.last_working_set.debug()
+        debug = self.tree.debugBuildModelContext(self.session_id)
+        return {
+            "session_id": self.session_id,
+            "active_leaf_id": debug.get("activeLeafId"),
+            "active_branch_entry_ids": debug.get("activePathEntryIds", []),
+            "active_branch_context_messages": len(self.tree.buildModelContext(self.session_id)),
+            "recall_result_uris": [],
+        }
+
     def close(self) -> None:
         self.mcp.close()
 
@@ -315,3 +432,22 @@ def _env_flag(name: str, *, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _active_path_summary(debug: dict[str, Any]) -> str:
+    ids = debug.get("activePathEntryIds") or []
+    if not ids:
+        return ""
+    return (
+        f"Active path has {len(ids)} tree entries. "
+        f"Active leaf: {debug.get('activeLeafId') or '(none)'}. "
+        "Raw active path messages are supplied separately as model messages; "
+        "this section records the retrieval path used by TGM."
+    )
+
+
+def json_dumps_safe(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    except TypeError:
+        return str(value)

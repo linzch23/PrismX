@@ -1,78 +1,53 @@
-# my_agent2 Coding Agent UI Spec
+# PrismX Session Tree Workbench UI Spec
 
 ## Information Architecture
 
-The UI is a task-first coding agent workspace, not a traditional chat surface.
+The web UI is a PrismX Agent workspace built around Session trees.
 
-- TopBar owns task identity, primary tabs, run status, and access to hidden diagnostics.
-- Run Timeline is the primary surface for agent progress and action evidence.
-- Workbench is the secondary surface for reviewing artifacts produced by the run.
-- Session Tree is hidden in a drawer because it is a navigation/debug tool, not the main workflow.
-- Inspector is hidden by default and exposes trace, context, memory, and raw JSON only when requested.
+- A Session Tree is a task tree made of Session nodes.
+- A Session node is a complete backend session and owns its messages.
+- Messages are content inside a Session; they are not tree nodes.
+- Chat, Tree, and Memory read from one shared workspace state.
 
-## Run Timeline
+## Layout
 
-Run Timeline presents the agent as a sequence of execution steps.
+- Header: PrismX identity, active Session label, refresh, and agent entry.
+- Sidebar: projects, each project's Session Trees, and creation actions.
+- Workspace tabs: Chat, Tree, Memory.
 
-Stable fields for API-backed data:
+## Chat
 
-- `id`
-- `title`
-- `status`: `pending`, `running`, `done`, or `error`
-- `time` or worked-time label
-- `summary`
-- `details`
-- `tools[]`
-- `expanded`
+The Chat tab renders the active Session.
 
-Each tool item should keep:
+- Title comes from the active Session node.
+- Message list comes from that Session's JSONL records.
+- Sending a message targets the active Session id.
+- New Child Session creates a real backend session and links it under the active Session node.
 
-- `name`
-- `status`
-- `input`
-- `output`
-- `duration`
+## Tree
 
-## Workbench
+The Tree tab visualizes Session nodes.
 
-Workbench uses tabs for artifacts and operational views:
+- Nodes grow left to right.
+- Each node shows title, status, and message count.
+- Selecting a node updates activeSessionId.
+- Nodes support pan, zoom, drag-position persistence, rename, child creation, and delete.
+- Root Session nodes cannot be deleted.
+- Deleting a non-root node removes its subtree and backend session files.
 
-- Agent: run overview and current next action.
-- Changes: files touched by the run, with diff stats.
-- Preview: iframe or empty state for live app preview.
-- Code: read-only code preview.
-- Tools: structured tool-call log and registered tool definitions.
+## Memory
 
-The Workbench should not own conversation history. It should expose concrete outputs.
+The Memory tab is derived from active workspace state.
 
-## Hidden Tree Drawer
+- Active Path Context is computed from root Session to active Session.
+- Tree Memory Recall filters memory items against the active tree's sessions.
+- Long-term Knowledge Recall uses real knowledge items when available and context-aware examples otherwise.
+- Working Context Preview counts active path sessions, tree memory items, active session messages, and knowledge items.
 
-The Tree Drawer is for branch-level inspection and future controls:
+## API Boundary
 
-- inspect session nodes
-- jump to an existing node
-- fork from a node
-- label a node
+The browser uses `/api/workspace` as its primary hydration endpoint.
 
-It remains hidden to keep the main workspace focused on execution rather than history topology.
-
-## Hidden Inspector
-
-Inspector has four panels:
-
-- Trace: active leaf, included/excluded entries, token estimate, compaction state.
-- Context: compact summary of what will enter the model context.
-- Memory: long-term memory file surfaced by the API.
-- Raw JSON: unmodified diagnostic payload for debugging.
-
-These panels are intentionally off-canvas because they are diagnostic surfaces.
-
-## API Integration Boundary
-
-The server maps `sessions/*.jsonl` into this UI shape without making the browser parse JSONL directly:
-
-- JSONL message/tool entries become `RunStep` objects.
-- `tool_call` and `tool_result` attach to the relevant step.
-- file write/edit tool calls populate Changes and Tools.
-- node detail API populates the Raw JSON inspector.
-- Tree Drawer keeps node fields stable: `id`, `parentId`, `type`, `label`, `preview`, `status`.
+- Workspace metadata persists project/tree/node relationships and node positions.
+- Existing `sessiontrees/*.jsonl` files remain the source of truth for messages.
+- Legacy entry-tree endpoints remain available for compatibility but are not the main UI model.

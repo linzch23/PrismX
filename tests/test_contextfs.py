@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir, make_contextfs_root
 
-from my_agent2.contextfs import ContextFS, ContextObject
+from prismx.contextfs import ContextFS, ContextObject
 
 
 class ContextFSBasicTests(unittest.TestCase):

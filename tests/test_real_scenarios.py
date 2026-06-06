@@ -42,7 +42,6 @@ def make_env(tmp: Path) -> dict[str, str]:
     (tmp / "templates" / "system.md").write_text(
         "Workspace: {{ workspace }}\n\n"
         "{{ runtime_context or \"(None)\" }}\n\n"
-        "Memory: {{ memory }}\n\n"
         "User: {{ user_profile }}\n",
         encoding="utf-8",
     )
@@ -53,7 +52,6 @@ def make_env(tmp: Path) -> dict[str, str]:
         "MY_AGENT_MODEL": os.getenv("MY_AGENT_MODEL", "deepseek-chat"),
         "MY_AGENT_MAX_TOKENS": "4096",
         "MY_AGENT_MAX_CONTEXT_TOKENS": os.getenv("MY_AGENT_MAX_CONTEXT_TOKENS", "64000"),
-        "MY_AGENT_STARTUP_COMPACTION": "0",
         "MY_AGENT_RUNTIME_CONTEXT_LIMIT": "6",
         "MY_AGENT_RUNTIME_CONTEXT_MAX_CHARS": "8000",
     }
@@ -61,7 +59,7 @@ def make_env(tmp: Path) -> dict[str, str]:
 
 def run_app(tmp: Path, env: dict[str, str], turns: list[str]) -> tuple[Any, list[str]]:
     """Run AgentApp through a list of user inputs, return app and replies."""
-    from my_agent2.loop import AgentApp
+    from prismx.loop import AgentApp
     from unittest.mock import patch
 
     replies = []
@@ -111,9 +109,7 @@ def scenario_1_preferences():
     check("Preferences" in rendered, "/memory 包含 Preferences 分类")
     check("VS Code" in rendered or "编辑器" in rendered, "/memory 显示编辑器偏好")
 
-    # 验证 LEGACY MEMORY.md 兼容
-    legacy = (tmp / "memory" / "MEMORY.md").read_text(encoding="utf-8")
-    check("VS Code" in legacy or "编辑器" in legacy, "旧版 MEMORY.md 同步写入")
+    check(not (tmp / "memory" / "MEMORY.md").exists(), "不再写入旧版 MEMORY.md")
 
     app.close()
     return len(FAIL) == 0
@@ -137,7 +133,7 @@ def scenario_2_long_conversation():
 
     # 检查对话记录（从 JSONL 文件直接读取）
     import json as _json
-    session_path = tmp / "sessions" / f"{app.session_id}.jsonl"
+    session_path = tmp / "sessiontrees" / f"{app.session_id}.jsonl"
     rows = []
     if session_path.exists():
         for line in session_path.read_text(encoding="utf-8").splitlines():
@@ -153,7 +149,7 @@ def scenario_2_long_conversation():
     try:
         result = app.compact_now()
         if result:
-            archived = app.memory.list_context(prefix="ctx://sessions/archives/", limit=10)
+            archived = app.memory.list_context(prefix="ctx://sessiontrees/archives/", limit=10)
             print(f"    [info] compact 成功，archives={len(archived)}")
             check(len(archived) >= 1, "压缩后生成 session archive")
         else:
@@ -247,7 +243,7 @@ def scenario_4_cross_session():
     check(len(results) >= 1, "搜索'SQLite'能找到数据库记忆")
 
     # 验证 context tools 可用
-    from my_agent2.tools.context import SearchContextTool
+    from prismx.tools.context import SearchContextTool
     tool = SearchContextTool(app_b.memory)
     output = tool.execute(query="队列", limit=5)
     check("Redis" in output, "search_context 工具搜索'队列'找到 Redis")
@@ -315,7 +311,7 @@ def main():
     ]
 
     print("=" * 60)
-    print("my_agent2 真实场景测试")
+    print("prismx 真实场景测试")
     print(f"Provider: {os.getenv('MY_AGENT_PROVIDER', 'deepseek')}")
     print(f"Model: {os.getenv('MY_AGENT_MODEL', 'deepseek-chat')}")
     print("=" * 60)
@@ -349,3 +345,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

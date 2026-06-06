@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir, make_fake_model_client
 
-from my_agent2.session_memory_committer import SessionMemoryCommitter, LlmMemoryExtractor
+from prismx.session_memory_committer import SessionMemoryCommitter, LlmMemoryExtractor
 
 
 class FakeTree:
@@ -63,7 +63,7 @@ class SessionMemoryCommitterTests(unittest.TestCase):
 
         archive_uri = committer.commit_compaction("s1", "c1")
 
-        self.assertIn("ctx://sessions/archives", archive_uri)
+        self.assertIn("ctx://sessiontrees/archives", archive_uri)
         self.assertEqual(len(fake_memory.archive_calls), 1)
         call = fake_memory.archive_calls[0]
         self.assertEqual(len(call["operations"]), 1)
@@ -94,7 +94,8 @@ class SessionMemoryCommitterTests(unittest.TestCase):
 
         archive_uri = committer.commit_compaction("s1", "c2")
 
-        self.assertIn("ctx://sessions/archives", archive_uri)
+        self.assertIn("ctx://sessiontrees/archives", archive_uri)
         # Still wrote archive with empty operations
         self.assertEqual(len(fake_memory.archive_calls), 1)
         self.assertEqual(fake_memory.archive_calls[0]["operations"], [])
+

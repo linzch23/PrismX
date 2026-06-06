@@ -6,9 +6,11 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 memory/
+data/
 .team/
-sessions/
+sessiontrees/
 dist/
 build/
 .playwright-mcp
 .superpowers/
+superpowers/

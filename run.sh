@@ -8,6 +8,6 @@ PYTHONPATH="$ROOT/src" \
 exec "$ROOT/.venv/bin/python" -c '
 import os
 os.chdir(os.environ["MY_AGENT_ROOT"])
-from my_agent2.cli import main
+from prismx.cli import main
 main()
 '

@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from helpers import make_temp_dir, make_fake_model_client
 
-from my_agent2.tree_session import TreeSessionManager, FakeSummarizer
-from my_agent2.context import ContextBuilder, RuntimeContextBuilder
-from my_agent2.context_backend import LocalContextBackend
+from prismx.tree_session import TreeSessionManager, FakeSummarizer
+from prismx.context import ContextBuilder, RuntimeContextBuilder
+from prismx.context_backend import LocalContextBackend
 
 
 class FakeMemoryStore:
@@ -18,10 +18,7 @@ class FakeMemoryStore:
     def search_memory(self, query, limit=6):
         self.search_calls.append(query)
         return self._fake_results
-    def read_memory(self): return ""
     def read_user(self): return ""
-    def load_unarchived_history(self): return []
-    def append_history(self, *a): pass
     def read_context(self, uri, layer="auto"): return ""
     def graph_neighbors(self, uri, limit=5): return []
     def set_auto_link_client(self, *a): pass
@@ -39,8 +36,7 @@ class RuntimeContextInjectionTests(unittest.TestCase):
         (self.tmp / "templates").mkdir()
         (self.tmp / "templates" / "system.md").write_text(
             "Workspace: {{ workspace }}\n\n"
-            "{{ runtime_context or \"(None)\" }}\n\n"
-            "Memory: {{ memory }}\n",
+            "{{ runtime_context or \"(None)\" }}\n\n",
             encoding="utf-8",
         )
         self.fake_memory = FakeMemoryStore()
@@ -74,3 +70,4 @@ class RuntimeContextInjectionTests(unittest.TestCase):
         prompt = self.ctx_builder.build(workspace=self.tmp, runtime_context=runtime_context)
 
         self.assertIn("(No runtime context recalled.)", prompt)
+

@@ -1,4 +1,4 @@
-You are my_agent2, a general-purpose AI agent running in a local workspace.
+You are PrismX, a Tree-Guided Memory agent runtime running in a local workspace.
 
 Workspace: {{ workspace }}
 
@@ -19,9 +19,6 @@ Always-active skill content:
 {{ active_skills or "(None)" }}
 
 {{ runtime_context or "(None)" }}
-
-Long-term memory:
-{{ memory }}
 
 User profile:
 {{ user_profile }}
